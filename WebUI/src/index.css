@@ -1,0 +1,12 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-plugin-bg text-plugin-text font-sans antialiased overflow-hidden;
+    margin: 0;
+    padding: 0;
+    user-select: none;
+  }
+}

@@ -1,0 +1,479 @@
+<script lang="ts">
+    import { params, setParameterValue } from './state/store';
+    import { bridge } from './bridge/bridge';
+    import type { ParameterId } from './types/parameters';
+
+    import Number   from './components/Number.svelte';
+    import Toggle   from './components/Toggle.svelte';
+    import Camera   from './components/Camera.svelte';
+    import Tooltip  from './components/Tooltip.svelte';
+
+    const {
+        gainDb, outputTrimDb,
+        satDrive, satMix, satTone,
+        timbreCutoff, timbreResonance, timbreDrivePre,
+        vibratoRate, vibratoDepth, vibratoFadeIn,
+        loCutEnabled, hiCutEnabled, loCutFreq, hiCutFreq,
+        erEnabled, erAmount, erRate, erShape,
+        reverbMode, crossoverFreq, diffusion, scale, decay, damping, feedback,
+        highFilterType, chorusEnabled, chorusAmount, chorusRate,
+        reflectGain, diffuseGain, dryWet,
+        predelay, smooth, size, freeze, flatEnabled, cutEnabled, stereo, density,
+    } = params;
+
+    let bypassed = false;
+
+    function send(id: ParameterId, v: number) {
+        if (!isFinite(v) || isNaN(v)) return;
+        setParameterValue(id, v);
+        bridge.sendParameterChange(id, v);
+    }
+
+    // display value → normalized 0-1
+    const nl = (v: number, mn: number, mx: number) =>
+        Math.min(1, Math.max(0, (v - mn) / (mx - mn)));
+    const ns = (v: number, mn: number, mx: number, sk: number) =>
+        Math.min(1, Math.pow(Math.max(0, (v - mn) / (mx - mn)), sk));
+
+    // normalized 0-1 → display value
+    const dl = (n: number, mn: number, mx: number) => mn + (mx - mn) * n;
+    const ds = (n: number, mn: number, mx: number, sk: number) =>
+        mn + (mx - mn) * Math.pow(Math.max(0, n), 1 / sk);
+</script>
+
+<main class="scene">
+  <div class="plugin" class:bypassed>
+
+    <!-- ── Header ── -->
+    <div class="header">
+      <div class="brand">
+        <span class="brand-name">POSTALK</span>
+        <span class="brand-sub">— REVERB·01</span>
+      </div>
+      <Toggle label="BYPASS" pill active={bypassed}
+        on:change={e => { bypassed = e.detail.active; }} />
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="body">
+
+      <!-- ══ TOP ROW ══ -->
+      <div class="row-top">
+
+        <!-- Presets -->
+        <div class="side-card">
+          <div class="card-title">Presets</div>
+          <div class="presets-grid">
+            {#each [1,2,3,4,5,6] as n}
+              <button class="preset-btn">{n}</button>
+            {/each}
+          </div>
+        </div>
+
+        <!-- Camera -->
+        <div class="camera-card">
+          <Camera />
+        </div>
+
+        <!-- Gestures + quick access numbers -->
+        <div class="side-card">
+          <div class="card-title">Gestures</div>
+          <div class="gesture-icons">
+            <button class="icon-btn">🤙</button>
+            <button class="icon-btn">✊</button>
+          </div>
+          <div class="thin-sep"></div>
+          <div class="card-sub">Quick Access</div>
+          <Number label="Gain"
+            value={+dl($gainDb, -24, 12).toFixed(1)}
+            min={-24} max={12} step={0.1} decimals={1} unit=" dB"
+            on:change={e => send('gainDb', nl(e.detail.value, -24, 12))} />
+          <Number label="Dry/Wet"
+            value={+dl($dryWet, 0, 100).toFixed(0)}
+            min={0} max={100} step={1} decimals={0} unit="%"
+            on:change={e => send('dryWet', nl(e.detail.value, 0, 100))} />
+        </div>
+
+      </div>
+
+      <!-- ══ BOTTOM ROW: 4 parameter panels ══ -->
+      <div class="row-bottom">
+
+        <!-- ─ REVERB ─ -->
+        <div class="param-panel reverb-panel">
+          <div class="card-title">Reverb</div>
+
+          <div class="group-label">Core</div>
+          <div class="num-row">
+            <Number label="Decay"
+              value={+ds($decay, 200, 60000, 0.3).toFixed(0)}
+              min={200} max={60000} step={10} decimals={0} unit=" ms"
+              on:change={e => send('decay', ns(e.detail.value, 200, 60000, 0.3))} />
+            <Number label="Diffusion"
+              value={+$diffusion.toFixed(2)}
+              min={0} max={1} step={0.01} decimals={2}
+              on:change={e => send('diffusion', e.detail.value)} />
+            <Number label="Size"
+              value={+$size.toFixed(2)}
+              min={0} max={1} step={0.01} decimals={2}
+              on:change={e => send('size', e.detail.value)} />
+            <Number label="Damping"
+              value={+$damping.toFixed(2)}
+              min={0} max={1} step={0.01} decimals={2}
+              on:change={e => send('damping', e.detail.value)} />
+            <Number label="Feedback"
+              value={+$feedback.toFixed(2)}
+              min={0} max={1} step={0.01} decimals={2}
+              on:change={e => send('feedback', e.detail.value)} />
+            <Number label="Stereo"
+              value={+dl($stereo, 0, 120).toFixed(0)}
+              min={0} max={120} step={1} decimals={0} unit="°"
+              on:change={e => send('stereo', nl(e.detail.value, 0, 120))} />
+          </div>
+
+          <div class="group-label">Mix</div>
+          <div class="num-row">
+            <Number label="Dry/Wet"
+              value={+dl($dryWet, 0, 100).toFixed(0)}
+              min={0} max={100} step={1} decimals={0} unit="%"
+              on:change={e => send('dryWet', nl(e.detail.value, 0, 100))} />
+            <Number label="Predelay"
+              value={+ds($predelay, 0, 500, 0.5).toFixed(1)}
+              min={0} max={500} step={1} decimals={1} unit=" ms"
+              on:change={e => send('predelay', ns(e.detail.value, 0, 500, 0.5))} />
+            <Number label="Reflect"
+              value={+dl($reflectGain, -30, 6).toFixed(1)}
+              min={-30} max={6} step={0.1} decimals={1} unit=" dB"
+              on:change={e => send('reflectGain', nl(e.detail.value, -30, 6))} />
+            <Number label="Diffuse"
+              value={+dl($diffuseGain, -30, 6).toFixed(1)}
+              min={-30} max={6} step={0.1} decimals={1} unit=" dB"
+              on:change={e => send('diffuseGain', nl(e.detail.value, -30, 6))} />
+          </div>
+
+          <div class="group-label">FDN</div>
+          <div class="num-row">
+            <Number label="Crossover"
+              value={+ds($crossoverFreq, 200, 8000, 0.5).toFixed(0)}
+              min={200} max={8000} step={10} decimals={0} unit=" Hz"
+              on:change={e => send('crossoverFreq', ns(e.detail.value, 200, 8000, 0.5))} />
+            <Number label="Scale"
+              value={+$scale.toFixed(2)}
+              min={0} max={1} step={0.01} decimals={2}
+              on:change={e => send('scale', e.detail.value)} />
+            <Number label="Mode"
+              value={Math.round($reverbMode)}
+              min={0} max={1} step={1} decimals={0}
+              on:change={e => send('reverbMode', e.detail.value)} />
+            <Number label="Density"
+              value={Math.round($density * 3)}
+              min={0} max={3} step={1} decimals={0}
+              on:change={e => send('density', e.detail.value / 3)} />
+            <Number label="Smooth"
+              value={Math.round($smooth * 3)}
+              min={0} max={3} step={1} decimals={0}
+              on:change={e => send('smooth', e.detail.value / 3)} />
+            <Number label="HF Filter"
+              value={Math.round($highFilterType)}
+              min={0} max={1} step={1} decimals={0}
+              on:change={e => send('highFilterType', e.detail.value)} />
+          </div>
+
+          <div class="group-label">Gates</div>
+          <div class="num-row">
+            <Number label="Freeze"
+              value={Math.round($freeze)}
+              min={0} max={1} step={1} decimals={0}
+              on:change={e => send('freeze', e.detail.value)} />
+            <Number label="Flat"
+              value={Math.round($flatEnabled)}
+              min={0} max={1} step={1} decimals={0}
+              on:change={e => send('flatEnabled', e.detail.value)} />
+            <Number label="Cut"
+              value={Math.round($cutEnabled)}
+              min={0} max={1} step={1} decimals={0}
+              on:change={e => send('cutEnabled', e.detail.value)} />
+          </div>
+
+          <div class="group-label">Early Reflections</div>
+          <div class="num-row">
+            <Number label="ER On"
+              value={Math.round($erEnabled)}
+              min={0} max={1} step={1} decimals={0}
+              on:change={e => send('erEnabled', e.detail.value)} />
+            <Number label="Amount"
+              value={+ds($erAmount, 2, 55, 0.5).toFixed(1)}
+              min={2} max={55} step={0.5} decimals={1}
+              on:change={e => send('erAmount', ns(e.detail.value, 2, 55, 0.5))} />
+            <Number label="Rate"
+              value={+ds($erRate, 0.07, 1.3, 0.5).toFixed(2)}
+              min={0.07} max={1.3} step={0.01} decimals={2} unit=" Hz"
+              on:change={e => send('erRate', ns(e.detail.value, 0.07, 1.3, 0.5))} />
+            <Number label="Shape"
+              value={+$erShape.toFixed(2)}
+              min={0} max={1} step={0.01} decimals={2}
+              on:change={e => send('erShape', e.detail.value)} />
+          </div>
+
+          <div class="group-label">Chorus</div>
+          <div class="num-row">
+            <Number label="Chorus"
+              value={Math.round($chorusEnabled)}
+              min={0} max={1} step={1} decimals={0}
+              on:change={e => send('chorusEnabled', e.detail.value)} />
+            <Number label="Amount"
+              value={+dl($chorusAmount, 0.01, 4.0).toFixed(2)}
+              min={0.01} max={4} step={0.01} decimals={2}
+              on:change={e => send('chorusAmount', nl(e.detail.value, 0.01, 4))} />
+            <Number label="Rate"
+              value={+ds($chorusRate, 0.01, 8, 0.5).toFixed(2)}
+              min={0.01} max={8} step={0.01} decimals={2} unit=" Hz"
+              on:change={e => send('chorusRate', ns(e.detail.value, 0.01, 8, 0.5))} />
+          </div>
+
+          <div class="group-label">Input Filter</div>
+          <div class="num-row">
+            <Number label="Lo Cut"
+              value={Math.round($loCutEnabled)}
+              min={0} max={1} step={1} decimals={0}
+              on:change={e => send('loCutEnabled', e.detail.value)} />
+            <Number label="Lo Freq"
+              value={+ds($loCutFreq, 50, 18000, 0.3).toFixed(0)}
+              min={50} max={18000} step={10} decimals={0} unit=" Hz"
+              on:change={e => send('loCutFreq', ns(e.detail.value, 50, 18000, 0.3))} />
+            <Number label="Hi Cut"
+              value={Math.round($hiCutEnabled)}
+              min={0} max={1} step={1} decimals={0}
+              on:change={e => send('hiCutEnabled', e.detail.value)} />
+            <Number label="Hi Freq"
+              value={+ds($hiCutFreq, 50, 18000, 0.3).toFixed(0)}
+              min={50} max={18000} step={10} decimals={0} unit=" Hz"
+              on:change={e => send('hiCutFreq', ns(e.detail.value, 50, 18000, 0.3))} />
+          </div>
+        </div>
+
+        <!-- ─ SATURATION ─ -->
+        <div class="param-panel">
+          <div class="card-title">Saturation</div>
+
+          <div class="group-label">Gain</div>
+          <div class="num-row">
+            <Number label="Gain"
+              value={+dl($gainDb, -24, 12).toFixed(1)}
+              min={-24} max={12} step={0.1} decimals={1} unit=" dB"
+              on:change={e => send('gainDb', nl(e.detail.value, -24, 12))} />
+            <Number label="Trim"
+              value={+dl($outputTrimDb, -12, 0).toFixed(1)}
+              min={-12} max={0} step={0.1} decimals={1} unit=" dB"
+              on:change={e => send('outputTrimDb', nl(e.detail.value, -12, 0))} />
+          </div>
+
+          <div class="group-label">Drive</div>
+          <div class="num-row">
+            <Number label="Drive"
+              value={+$satDrive.toFixed(2)}
+              min={0} max={1} step={0.01} decimals={2}
+              on:change={e => send('satDrive', e.detail.value)} />
+            <Number label="Mix"
+              value={+dl($satMix, 0, 100).toFixed(0)}
+              min={0} max={100} step={1} decimals={0} unit="%"
+              on:change={e => send('satMix', nl(e.detail.value, 0, 100))} />
+            <Number label="Tone"
+              value={+$satTone.toFixed(2)}
+              min={0} max={1} step={0.01} decimals={2}
+              on:change={e => send('satTone', e.detail.value)} />
+          </div>
+        </div>
+
+        <!-- ─ TIMBRE ─ -->
+        <div class="param-panel">
+          <div class="card-title">Timbre</div>
+          <div class="num-row">
+            <Number label="Cutoff"
+              value={+ds($timbreCutoff, 20, 20000, 0.3).toFixed(0)}
+              min={20} max={20000} step={10} decimals={0} unit=" Hz"
+              on:change={e => send('timbreCutoff', ns(e.detail.value, 20, 20000, 0.3))} />
+            <Number label="Resonance"
+              value={+ds($timbreResonance, 0.5, 10, 0.5).toFixed(2)}
+              min={0.5} max={10} step={0.01} decimals={2}
+              on:change={e => send('timbreResonance', ns(e.detail.value, 0.5, 10, 0.5))} />
+            <Number label="Pre-Drive"
+              value={+dl($timbreDrivePre, 0, 12).toFixed(1)}
+              min={0} max={12} step={0.1} decimals={1} unit=" dB"
+              on:change={e => send('timbreDrivePre', nl(e.detail.value, 0, 12))} />
+          </div>
+        </div>
+
+        <!-- ─ VIBRATO ─ -->
+        <div class="param-panel">
+          <div class="card-title">Vibrato</div>
+          <div class="num-row">
+            <Number label="Rate"
+              value={+ds($vibratoRate, 0.1, 8, 0.5).toFixed(2)}
+              min={0.1} max={8} step={0.01} decimals={2} unit=" Hz"
+              on:change={e => send('vibratoRate', ns(e.detail.value, 0.1, 8, 0.5))} />
+            <Number label="Depth"
+              value={+$vibratoDepth.toFixed(2)}
+              min={0} max={1} step={0.01} decimals={2}
+              on:change={e => send('vibratoDepth', e.detail.value)} />
+            <Number label="Fade In"
+              value={+ds($vibratoFadeIn, 0, 500, 0.5).toFixed(0)}
+              min={0} max={500} step={1} decimals={0} unit=" ms"
+              on:change={e => send('vibratoFadeIn', ns(e.detail.value, 0, 500, 0.5))} />
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</main>
+
+<Tooltip />
+
+<style>
+  :global(body) {
+    margin: 0; padding: 0;
+    user-select: none; cursor: default;
+    background: #09070f;
+    font-family: 'Jost', sans-serif;
+    overflow-y: auto;
+  }
+
+  .scene {
+    min-height: 100vh;
+    display: flex; justify-content: center; align-items: flex-start;
+    background:
+      radial-gradient(ellipse at 25% 35%, rgba(160,140,220,0.1), transparent 55%),
+      radial-gradient(ellipse at 75% 70%, rgba(200,140,255,0.07), transparent 50%),
+      #09070f;
+    padding: 1rem;
+  }
+
+  .plugin {
+    width: 100%; max-width: 1400px;
+    background: linear-gradient(135deg,
+      rgba(255,255,255,0.07) 0%,
+      rgba(200,190,240,0.04) 50%,
+      rgba(160,140,220,0.06) 100%);
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 20px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.16);
+    padding: 18px 20px 24px;
+    transition: opacity 0.2s;
+  }
+  .plugin.bypassed { opacity: 0.4; pointer-events: none; }
+
+  /* ── Header ── */
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .brand { display: flex; align-items: baseline; gap: 8px; }
+  .brand-name {
+    font-size: 1.1rem; font-weight: 300; letter-spacing: 0.35em;
+    text-transform: uppercase; color: rgba(230,220,255,0.88);
+    text-shadow: 0 0 20px rgba(200,180,255,0.25);
+  }
+  .brand-sub {
+    font-size: 0.6rem; font-weight: 200; letter-spacing: 0.25em;
+    color: rgba(180,170,210,0.4);
+  }
+
+  .divider {
+    height: 1px;
+    background: linear-gradient(to right, transparent, rgba(255,255,255,0.09), transparent);
+    margin: 0 -4px 14px;
+  }
+
+  /* ── Body ── */
+  .body { display: flex; flex-direction: column; gap: 12px; }
+
+  /* ── Top Row ── */
+  .row-top { display: flex; gap: 10px; height: 260px; }
+
+  .side-card {
+    flex: 0 0 152px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 14px;
+    padding: 12px;
+    display: flex; flex-direction: column; gap: 8px;
+    overflow: hidden;
+  }
+
+  .camera-card {
+    flex: 1;
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.09);
+    background: rgba(0,0,0,0.35);
+  }
+
+  .card-title {
+    font-size: 0.52rem; font-weight: 300; letter-spacing: 0.3em;
+    text-transform: uppercase; color: rgba(180,170,210,0.5);
+    flex-shrink: 0;
+  }
+
+  .card-sub {
+    font-size: 0.44rem; font-weight: 300; letter-spacing: 0.25em;
+    text-transform: uppercase; color: rgba(180,170,210,0.3);
+  }
+
+  .thin-sep {
+    height: 1px; background: rgba(255,255,255,0.07); flex-shrink: 0;
+  }
+
+  .presets-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px;
+    flex: 1; align-content: start;
+  }
+  .preset-btn {
+    aspect-ratio: 1; border-radius: 50%;
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: rgba(200,190,230,0.65);
+    font-family: 'Jost', sans-serif; font-size: 0.6rem; font-weight: 300;
+    cursor: pointer; transition: background 0.15s;
+  }
+  .preset-btn:hover { background: rgba(255,110,40,0.18); color: rgba(255,170,100,0.9); }
+
+  .gesture-icons { display: flex; gap: 6px; flex-shrink: 0; }
+  .icon-btn {
+    padding: 5px 8px; border-radius: 8px;
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.11);
+    font-size: 0.9rem; cursor: pointer;
+    transition: background 0.15s;
+  }
+  .icon-btn:hover { background: rgba(255,110,40,0.15); }
+
+  /* ── Bottom Row ── */
+  .row-bottom {
+    display: flex; gap: 10px; align-items: flex-start;
+  }
+
+  .param-panel {
+    flex: 1;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+
+  .reverb-panel { flex: 1.6; }
+
+  .group-label {
+    font-size: 0.44rem; font-weight: 300; letter-spacing: 0.25em;
+    text-transform: uppercase; color: rgba(180,170,210,0.3);
+    margin-top: 2px;
+  }
+
+  .num-row {
+    display: flex; flex-wrap: wrap; gap: 6px 10px;
+  }
+</style>

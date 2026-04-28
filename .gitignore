@@ -1,0 +1,40 @@
+# Build outputs
+build/
+out/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+_deps/
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+*.ipa
+*.dSYM/
+
+# VST / AU plugin copies
+~/Library/Audio/Plug-Ins/
+
+# Node / Svelte
+WebUI/node_modules/
+WebUI/dist/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*

@@ -1,0 +1,7 @@
+/* Global styles — imported once in main.ts */
+@import url('https://fonts.googleapis.com/css2?family=Jost:wght@200;300;400&display=swap');
+
+/* Prevent layout shifts when numeric values change */
+* {
+    font-variant-numeric: tabular-nums;
+}
