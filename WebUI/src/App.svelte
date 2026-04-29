@@ -463,7 +463,15 @@
     border-radius: 14px;
     padding: 12px 14px;
     display: flex; flex-direction: column; gap: 8px;
+    max-height: calc(100vh - 420px);
+    min-height: 120px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.15) transparent;
   }
+  .param-panel::-webkit-scrollbar { width: 4px; }
+  .param-panel::-webkit-scrollbar-track { background: transparent; }
+  .param-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
 
   .reverb-panel { flex: 1.6; }
 
