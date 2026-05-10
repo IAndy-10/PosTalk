@@ -23,11 +23,20 @@ void FDNReverb::prepare(double sampleRate) {
         modLFOs[i].setFrequency(lfoFreq);
 
         modDepth[i] = MOD_DEPTH_BASE;
+
+        // Initialise delay-length smoother at current length; ramp 50 ms on size changes.
+        smoothDelayLens[i].reset(sampleRate, 0.05);
+        smoothDelayLens[i].setCurrentAndTargetValue(static_cast<float>(delayLens[i]));
     }
 
     diffusion.prepare(sampleRate);
     diffusion.setDiffusion(diffAmount);
 
+    // Freeze crossfade smoother: 0 = normal, 1 = frozen, 20 ms transition.
+    freezeBlend.reset(sampleRate, 0.02);
+    freezeBlend.setCurrentAndTargetValue(0.0f);
+
+    normalDecayGain.fill(0.0f);
     updateDecayGains();
 }
 
@@ -52,10 +61,11 @@ void FDNReverb::setSize(float s) {
     if (sr <= 0.0) return;
     double ratio = sr / 44100.0;
     for (size_t i = 0; i < static_cast<size_t>(N); ++i) {
-        // Note: changing delay lengths at runtime can cause clicks.
-        // We clamp to current buffer capacity.
         int newLen = static_cast<int>(BASE_DELAYS[i] * ratio * (0.5 + s));
-        delayLens[i] = std::min(newLen, delayLines[i].getMaxDelaySamples() - 4);
+        newLen = std::min(newLen, delayLines[i].getMaxDelaySamples() - 4);
+        delayLens[i] = newLen;
+        // Smooth to the new length — avoids the click that would come from an abrupt jump.
+        smoothDelayLens[i].setTargetValue(static_cast<float>(newLen));
     }
     updateDecayGains();
 }
@@ -73,13 +83,13 @@ void FDNReverb::setFeedback(float fb) {
 
 void FDNReverb::setFrozen(bool isFrozen) {
     frozen = isFrozen;
+    // Crossfade to/from frozen state over ~20 ms instead of snapping.
+    freezeBlend.setTargetValue(isFrozen ? 1.0f : 0.0f);
     updateDecayGains();
 }
 
 void FDNReverb::setReverbMode(int m) {
     mode = m;
-    // Mode 0 (High) = brighter (1.5× crossover), Mode 1 (Low) = darker (0.6× crossover).
-    // Resulting cutoffs at extremes: 200×0.6=120Hz (safe) to 8000×1.5=12000Hz (safe, coeff≈0.82 < 1).
     float freqScale = (mode == 0) ? 1.5f : 0.6f;
     for (auto& f : dampFilters)
         f.setCutoffFreq(crossFreq * freqScale);
@@ -95,7 +105,6 @@ void FDNReverb::setInputScale(float s) {
 }
 
 void FDNReverb::setDensity(int d) {
-    // d: 0=Sparse→0 stages, 1=Low→1 stage, 2=Mid→2 stages, 3=High→4 stages
     static constexpr int stageMap[] = { 0, 1, 2, 4 };
     diffusion.setNumStages(stageMap[juce::jlimit(0, 3, d)]);
 }
@@ -104,25 +113,20 @@ void FDNReverb::setFlatEnabled(bool f) { flatEnabledFlag = f; }
 void FDNReverb::setCutEnabled(bool c)  { cutEnabledFlag  = c; }
 
 void FDNReverb::updateDecayGains() {
-    if (frozen) {
-        // Freeze: maintain signal with maximum feedback
-        for (size_t i = 0; i < static_cast<size_t>(N); ++i)
-            decayGain[i] = 0.9999f;
-        return;
-    }
-
+    // Always compute the RT60-based gain into normalDecayGain.
+    // The frozen blend is handled per-sample in process() via freezeBlend.
     float rt60 = decayMs * 0.001f;
     for (size_t i = 0; i < static_cast<size_t>(N); ++i) {
         float delaySec = static_cast<float>(delayLens[i]) / static_cast<float>(sr);
         if (rt60 > 0.0f && delaySec > 0.0f) {
-            // g = 10^(-3 * T60 / RT60) → gives -60 dB after RT60 seconds
+            // g = 10^(-3 * T60 / RT60) → -60 dB after RT60 seconds
             float g = std::pow(10.0f, -3.0f * delaySec / rt60);
-            decayGain[i] = g * feedback;
+            normalDecayGain[i] = g * feedback;
         } else {
-            decayGain[i] = 0.0f;
+            normalDecayGain[i] = 0.0f;
         }
-        // Stability clamp
-        decayGain[i] = std::min(decayGain[i], 0.9999f);
+        // Leave headroom from unity to avoid instability at high feedback settings.
+        normalDecayGain[i] = std::min(normalDecayGain[i], 0.9998f);
     }
 }
 
@@ -133,6 +137,10 @@ void FDNReverb::process(juce::AudioBuffer<float>& buffer) {
     if (numChannels < 1) return;
 
     for (int sampleIdx = 0; sampleIdx < numSamples; ++sampleIdx) {
+        // Freeze blend: 0 = normal RT60 decay, 1 = fully frozen (0.9999f per line).
+        // Ramps smoothly so toggling freeze does not produce a click.
+        const float fb = freezeBlend.getNextValue();
+
         float inL = buffer.getSample(0, sampleIdx);
         float inR = (numChannels >= 2) ? buffer.getSample(1, sampleIdx) : inL;
 
@@ -145,9 +153,12 @@ void FDNReverb::process(juce::AudioBuffer<float>& buffer) {
         // --- Read delay line outputs and apply damping ---
         std::array<float, N> y;
         for (size_t i = 0; i < static_cast<size_t>(N); ++i) {
-            // Per-line modulation (subtle vibrato to prevent metallic ringing)
+            // Per-line modulation (subtle vibrato to reduce metallic ringing)
             float mod = modLFOs[i].getNext() * modDepth[i];
-            float readPos = static_cast<float>(delayLens[i]) + mod;
+
+            // Smoothed delay length: ramps toward the target when setSize() is called,
+            // preventing the click that a sudden delay-length change would produce.
+            float readPos = smoothDelayLens[i].getNextValue() + mod;
             readPos = std::max(1.0f, readPos);
 
             y[i] = delayLines[i].readInterpolated(readPos);
@@ -156,8 +167,9 @@ void FDNReverb::process(juce::AudioBuffer<float>& buffer) {
             if (!(frozen && flatEnabledFlag))
                 y[i] = dampFilters[i].processSample(y[i]);
 
-            // Apply decay gain
-            y[i] *= decayGain[i];
+            // Blend between normal RT60 decay and frozen sustain (0.9999f).
+            const float actualGain = normalDecayGain[i] * (1.0f - fb) + 0.9999f * fb;
+            y[i] *= actualGain;
         }
 
         // --- Apply Hadamard feedback matrix ---
@@ -193,5 +205,5 @@ void FDNReverb::reset() {
         modLFOs[i].reset();
     }
     diffusion.reset();
+    freezeBlend.setCurrentAndTargetValue(frozen ? 1.0f : 0.0f);
 }
-

@@ -83,8 +83,6 @@ target_sources(AudioPlugin02 PRIVATE
 
     # DSP - Input modules
     Source/DSP/Input/GainModule.h
-    Source/DSP/Input/Saturation.h
-    Source/DSP/Input/TimbreFilter.h
 
     # DSP - Filters
     Source/DSP/Input/InputFilter.h
@@ -110,8 +108,15 @@ target_sources(AudioPlugin02 PRIVATE
     Source/DSP/Decay/FDNReverb.h
     Source/DSP/Decay/FDNReverb.cpp
 
-    # DSP - Modulation
+    # DSP - Modulation (input conditioning + shimmer section)
+    Source/DSP/Modulation/Saturation.h
+    Source/DSP/Modulation/Saturation.cpp
+    Source/DSP/Modulation/TimbreFilter.h
+    Source/DSP/Modulation/TimbreFilter.cpp
     Source/DSP/Modulation/Vibrato.h
+    Source/DSP/Modulation/Vibrato.cpp
+    Source/DSP/Modulation/PitchShifter.h
+    Source/DSP/Modulation/PitchShifter.cpp
     Source/DSP/DiffusionNetwork/Chorus.h
     Source/DSP/DiffusionNetwork/Chorus.cpp
 )

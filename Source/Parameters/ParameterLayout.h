@@ -175,6 +175,19 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
         vibratoFadeIn, "Vibrato Fade In",
         juce::NormalisableRange<float>(0.0f, 500.0f, 1.0f, 0.5f), 100.0f));
 
+    // ===== MODULE 6: PITCH SHIFTER =====
+    // 110–1760 Hz covers ±2 octaves around 440 Hz (unity = no shift).
+    // Logarithmic skew (0.5) gives fine resolution near unity.
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        pitchFrequency, "Pitch Frequency",
+        juce::NormalisableRange<float>(110.0f, 1760.0f, 0.1f, 0.5f), 440.0f));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        pitchOctaveStep, "Pitch Octave Step", false));
+
+    // ===== PERFORMANCE CONTROLS =====
+    params.push_back(std::make_unique<juce::AudioParameterBool>(sustainEnabled, "Sustain", false));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(cutNow, "Cut Now", false));
+
     // ===== STAGE 2: MACRO Y =====
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         macroY, "Macro Y",

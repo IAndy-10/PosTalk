@@ -48,122 +48,134 @@ bool AudioPluginAudioProcessor::isBusesLayoutSupported(const BusesLayout& layout
 }
 
 void AudioPluginAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
+    // ── Resolve all APVTS parameter pointers once ──
+    // Subsequent processBlock calls use p***->load() with no hash-map overhead.
+    auto resolve = [&](const juce::ParameterID& pid) {
+        return apvts.getRawParameterValue(pid.getParamID());
+    };
+    pSmooth          = resolve(smooth);
+    pGainDb          = resolve(gainDb);
+    pOutputTrimDb    = resolve(outputTrimDb);
+    pSatDrive        = resolve(satDrive);
+    pSatMix          = resolve(satMix);
+    pSatTone         = resolve(satTone);
+    pTimbreCutoff    = resolve(timbreCutoff);
+    pTimbreResonance = resolve(timbreResonance);
+    pTimbreDrivePre  = resolve(timbreDrivePre);
+    pLoCutEnabled    = resolve(loCutEnabled);
+    pHiCutEnabled    = resolve(hiCutEnabled);
+    pLoCutFreq       = resolve(loCutFreq);
+    pHiCutFreq       = resolve(hiCutFreq);
+    pHiCutQ          = resolve(hiCutQ);
+    pPredelay        = resolve(predelay);
+    pErEnabled       = resolve(erEnabled);
+    pErAmount        = resolve(erAmount);
+    pErRate          = resolve(erRate);
+    pErShape         = resolve(erShape);
+    pFreeze          = resolve(freeze);
+    pDecay           = resolve(decay);
+    pDiffusion       = resolve(diffusion);
+    pSize            = resolve(size);
+    pDamping         = resolve(damping);
+    pFeedback        = resolve(feedback);
+    pCrossoverFreq   = resolve(crossoverFreq);
+    pReverbMode      = resolve(reverbMode);
+    pHighFilterType  = resolve(highFilterType);
+    pScale           = resolve(scale);
+    pFlatEnabled     = resolve(flatEnabled);
+    pCutEnabled      = resolve(cutEnabled);
+    pDensity         = resolve(density);
+    pReflectGain     = resolve(reflectGain);
+    pDiffuseGain     = resolve(diffuseGain);
+    pChorusEnabled   = resolve(chorusEnabled);
+    pChorusAmount    = resolve(chorusAmount);
+    pChorusRate      = resolve(chorusRate);
+    pVibratoRate     = resolve(vibratoRate);
+    pVibratoDepth    = resolve(vibratoDepth);
+    pVibratoFadeIn   = resolve(vibratoFadeIn);
+    pPitchFrequency  = resolve(pitchFrequency);
+    pPitchOctaveStep = resolve(pitchOctaveStep);
+    pStereo          = resolve(stereo);
+    pDryWet          = resolve(dryWet);
+    pSustainEnabled  = resolve(sustainEnabled);
+    pCutNow          = resolve(cutNow);
+
+    // Cut Now ramp rates: 50 ms fade-out, 20 ms fade-in
+    const float sr = static_cast<float>(sampleRate);
+    cutNowFadeOutRate = 1.0f / (0.050f * sr);
+    cutNowFadeInRate  = 1.0f / (0.020f * sr);
+    cutNowState      = CutNowState::Idle;
+    cutNowGain       = 1.0f;
+    lastCutNowValue  = 0.0f;
+    sustainFromMidi  = false;
+
+    // Reset FDN dirty-flag cache — sentinel -1 forces all params to be pushed on the first block
+    lastDiffusion = lastSize = lastDamping = lastFeedback = lastCrossoverFreq
+        = lastReverbMode = lastHighFilterType = lastScale
+        = lastFlatEnabled = lastCutEnabled = lastDensity = -1.0f;
+
     // Prepare DSP modules
     gainModule.prepare(sampleRate);
     saturationModule.prepare(sampleRate);
     timbreFilter.prepare(sampleRate);
-    vibratoModule.prepare(sampleRate);
     inputFilter.prepare(sampleRate);
+    vibratoModule.prepare(sampleRate);
+    pitchShifter.prepare(sampleRate);
     predelayModule.prepare(sampleRate);
     earlyReflections.prepare(sampleRate);
     fdnReverb.prepare(sampleRate);
     chorusModule.prepare(sampleRate);
-    stereoWidener.setWidth(1.0f);
-    dryWetMixer.prepare(getTotalNumOutputChannels(), samplesPerBlock);  // B3 fix
+    stereoWidener.prepare(sampleRate);
+    dryWetMixer.prepare(getTotalNumOutputChannels(), samplesPerBlock);
     erOutputBuffer.setSize(getTotalNumOutputChannels(), samplesPerBlock);
-    lastSmoothMode = -1; // force smoother reset on first block
+    lastSmoothMode = -1;
 
-    // Prepare smoothed values (10ms smoothing time)
+    // Initialise smoothed values using cached pointers (10 ms ramp)
     auto initSmooth = [&](juce::SmoothedValue<float>& sv, float initial) {
         sv.reset(sampleRate, 0.01);
         sv.setCurrentAndTargetValue(initial);
     };
-
-    // ===== PANEL 1: INPUT =====
-    // FilterGraph: lo/hi cut frequencies
-    initSmooth(smoothLoCutFreq, apvts.getRawParameterValue(loCutFreq.getParamID())->load());
-    initSmooth(smoothHiCutFreq, apvts.getRawParameterValue(hiCutFreq.getParamID())->load());
-    // Predelay subsection
-    initSmooth(smoothPredelay, apvts.getRawParameterValue(PluginParamIDs::predelay.getParamID())->load());
-
-    // ===== PANEL 2: EARLY REFLECTIONS =====
-    initSmooth(smoothErAmount, apvts.getRawParameterValue(erAmount.getParamID())->load());
-    initSmooth(smoothErRate,   apvts.getRawParameterValue(erRate.getParamID())->load());
-    // Shape subsection: Reflect gain
-    initSmooth(smoothReflectGain, apvts.getRawParameterValue(reflectGain.getParamID())->load());
-
-    // ===== PANEL 3: DIFFUSION NETWORK =====
-    initSmooth(smoothCrossoverFreq, apvts.getRawParameterValue(crossoverFreq.getParamID())->load());
-    initSmooth(smoothDiffusion,     apvts.getRawParameterValue(diffusion.getParamID())->load());
-    initSmooth(smoothDamping,       apvts.getRawParameterValue(damping.getParamID())->load());
-    initSmooth(smoothFeedback,      apvts.getRawParameterValue(feedback.getParamID())->load());
-    initSmooth(smoothDiffuseGain,   apvts.getRawParameterValue(diffuseGain.getParamID())->load());
-    // Chorus subsection
-    initSmooth(smoothChorusAmount, apvts.getRawParameterValue(chorusAmount.getParamID())->load());
-    initSmooth(smoothChorusRate,   apvts.getRawParameterValue(chorusRate.getParamID())->load());
-    // Size subsection
-    initSmooth(smoothSize, apvts.getRawParameterValue(size.getParamID())->load());
-
-    // ===== PANEL 4: DECAY =====
-    initSmooth(smoothDecay, apvts.getRawParameterValue(decay.getParamID())->load());
-
-    // ===== PANEL 5: OUTPUT =====
-    initSmooth(smoothStereo, apvts.getRawParameterValue(stereo.getParamID())->load());
-    initSmooth(smoothDryWet, apvts.getRawParameterValue(dryWet.getParamID())->load());
-
-
-    updateDSPParameters();
+    initSmooth(smoothLoCutFreq,    pLoCutFreq->load());
+    initSmooth(smoothHiCutFreq,    pHiCutFreq->load());
+    initSmooth(smoothPredelay,     pPredelay->load());
+    initSmooth(smoothErAmount,     pErAmount->load());
+    initSmooth(smoothErRate,       pErRate->load());
+    initSmooth(smoothReflectGain,  pReflectGain->load());
+    initSmooth(smoothCrossoverFreq,pCrossoverFreq->load());
+    initSmooth(smoothDiffusion,    pDiffusion->load());
+    initSmooth(smoothDamping,      pDamping->load());
+    initSmooth(smoothFeedback,     pFeedback->load());
+    initSmooth(smoothDiffuseGain,  pDiffuseGain->load());
+    initSmooth(smoothChorusAmount, pChorusAmount->load());
+    initSmooth(smoothChorusRate,   pChorusRate->load());
+    initSmooth(smoothSize,         pSize->load());
+    initSmooth(smoothDecay,        pDecay->load());
+    initSmooth(smoothStereo,       pStereo->load());
+    initSmooth(smoothDryWet,       pDryWet->load());
 }
 
 void AudioPluginAudioProcessor::releaseResources() {
+    saturationModule.reset();
+    timbreFilter.reset();
     inputFilter.reset();
     predelayModule.reset();
     earlyReflections.reset();
     fdnReverb.reset();
+    vibratoModule.reset();
+    pitchShifter.reset();
     chorusModule.reset();
-}
-
-void AudioPluginAudioProcessor::updateDSPParameters() {
-    // Parameters → DSP mapping (grouped by WebUI panels in `WebUI/src/App.svelte`)
-
-    // ===== PANEL 1: INPUT =====
-    inputFilter.setLoCutEnabled(apvts.getRawParameterValue(loCutEnabled.getParamID())->load() > 0.5f);
-    inputFilter.setHiCutEnabled(apvts.getRawParameterValue(hiCutEnabled.getParamID())->load() > 0.5f);
-    inputFilter.setLoCutFreq(apvts.getRawParameterValue(loCutFreq.getParamID())->load());
-    inputFilter.setHiCutFreq(apvts.getRawParameterValue(hiCutFreq.getParamID())->load());
-    inputFilter.setHiCutQ(apvts.getRawParameterValue(hiCutQ.getParamID())->load());
-    predelayModule.setDelayMs(apvts.getRawParameterValue(PluginParamIDs::predelay.getParamID())->load());
-
-    // ===== PANEL 2: EARLY REFLECTIONS =====
-    // erAmount APVTS stores 2–55 (display units). Normalize to 0–1 for DSP.
-    earlyReflections.setEnabled(apvts.getRawParameterValue(erEnabled.getParamID())->load() > 0.5f);
-    earlyReflections.setAmount((apvts.getRawParameterValue(erAmount.getParamID())->load() - 2.0f) / 53.0f);
-    earlyReflections.setRate(apvts.getRawParameterValue(erRate.getParamID())->load());  // already in Hz
-    earlyReflections.setShape(apvts.getRawParameterValue(erShape.getParamID())->load());
-
-    // ===== PANEL 3: DIFFUSION NETWORK =====
-    fdnReverb.setDecayMs(apvts.getRawParameterValue(decay.getParamID())->load());
-    fdnReverb.setDiffusion(apvts.getRawParameterValue(diffusion.getParamID())->load());
-    fdnReverb.setSize(apvts.getRawParameterValue(PluginParamIDs::size.getParamID())->load());
-    fdnReverb.setDamping(apvts.getRawParameterValue(damping.getParamID())->load());
-    fdnReverb.setFeedback(apvts.getRawParameterValue(feedback.getParamID())->load());
-    fdnReverb.setCrossoverFreq(apvts.getRawParameterValue(crossoverFreq.getParamID())->load());
-    fdnReverb.setReverbMode(static_cast<int>(apvts.getRawParameterValue(reverbMode.getParamID())->load()));
-    fdnReverb.setFrozen(apvts.getRawParameterValue(PluginParamIDs::freeze.getParamID())->load() > 0.5f);
-    fdnReverb.setHighFilterType(apvts.getRawParameterValue(highFilterType.getParamID())->load() > 0.5f);
-    fdnReverb.setInputScale(apvts.getRawParameterValue(PluginParamIDs::scale.getParamID())->load());
-    fdnReverb.setFlatEnabled(apvts.getRawParameterValue(PluginParamIDs::flatEnabled.getParamID())->load() > 0.5f);
-    fdnReverb.setCutEnabled(apvts.getRawParameterValue(PluginParamIDs::cutEnabled.getParamID())->load() > 0.5f);
-    fdnReverb.setDensity(static_cast<int>(apvts.getRawParameterValue(density.getParamID())->load()));
-
-    // Chorus subsection (Diffusion Network)
-    chorusModule.setAmount(apvts.getRawParameterValue(chorusAmount.getParamID())->load());
-    chorusModule.setRate(apvts.getRawParameterValue(chorusRate.getParamID())->load());
-
-    // Early Reflections (initial state; real-time updates happen in processBlock)
-    earlyReflections.setAmount((apvts.getRawParameterValue(erAmount.getParamID())->load() - 2.0f) / 53.0f);
-    earlyReflections.setRate(apvts.getRawParameterValue(erRate.getParamID())->load());
-    earlyReflections.setShape(apvts.getRawParameterValue(erShape.getParamID())->load());
-
-    // ===== PANEL 5: OUTPUT =====
-    stereoWidener.setWidth(apvts.getRawParameterValue(stereo.getParamID())->load() / 120.0f);
-    dryWetMixer.setMix(apvts.getRawParameterValue(dryWet.getParamID())->load() / 100.0f);
 }
 
 void AudioPluginAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                               juce::MidiBuffer& midiMessages) {
     juce::ScopedNoDenormals noDenormals;
-    juce::ignoreUnused(midiMessages);
+
+    // Parse MIDI CC64 (sustain pedal)
+    for (const auto meta : midiMessages) {
+        const auto msg = meta.getMessage();
+        if (msg.isController() && msg.getControllerNumber() == 64)
+            sustainFromMidi = (msg.getControllerValue() >= 64);
+    }
 
     auto totalNumOutputChannels = getTotalNumOutputChannels();
     for (auto i = getTotalNumInputChannels(); i < totalNumOutputChannels; ++i)
@@ -172,109 +184,170 @@ void AudioPluginAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     const int numSamples  = buffer.getNumSamples();
     const int numChannels = buffer.getNumChannels();
 
-    // ── Smooth mode: update ramp times when selector changes (B4 / smooth wiring) ──
-    int smoothMode = static_cast<int>(apvts.getRawParameterValue(PluginParamIDs::smooth.getParamID())->load());
+    // ── Smooth mode: update ramp times when selector changes ──
+    const int smoothMode = static_cast<int>(pSmooth->load());
     if (smoothMode != lastSmoothMode) {
-        static constexpr float kSmoothTimes[] = { 0.001f, 0.02f, 0.08f, 0.20f }; // Off/Low/Med/High
-        float t = kSmoothTimes[juce::jlimit(0, 3, smoothMode)];
+        static constexpr float kSmoothTimes[] = { 0.001f, 0.02f, 0.08f, 0.20f };
+        const float t = kSmoothTimes[juce::jlimit(0, 3, smoothMode)];
         smoothDecay.reset(getSampleRate(), t);
         smoothReflectGain.reset(getSampleRate(), t);
         smoothDiffuseGain.reset(getSampleRate(), t);
         lastSmoothMode = smoothMode;
     }
-    smoothDecay.setTargetValue(apvts.getRawParameterValue(decay.getParamID())->load());
-    smoothReflectGain.setTargetValue(apvts.getRawParameterValue(reflectGain.getParamID())->load());
-    smoothDiffuseGain.setTargetValue(apvts.getRawParameterValue(diffuseGain.getParamID())->load());
+    smoothDecay.setTargetValue(pDecay->load());
+    smoothReflectGain.setTargetValue(pReflectGain->load());
+    smoothDiffuseGain.setTargetValue(pDiffuseGain->load());
 
     // ─────────────────────────────────────────────────────────────────────────
-    // NEW MODULE SLOT (Steps 1–4): GainModule → Saturation → TimbreFilter → Vibrato
+    // INPUT CONDITIONING: Gain → Saturation → TimbreFilter
+    // Shapes what goes into the reverb. saveDry captured here so the dry
+    // signal heard in the mix includes this input processing.
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Step 1: Gain
-    gainModule.setGainDb(apvts.getRawParameterValue(gainDb.getParamID())->load());
-    gainModule.setOutputTrimDb(apvts.getRawParameterValue(outputTrimDb.getParamID())->load());
+    gainModule.setGainDb(pGainDb->load());
+    gainModule.setOutputTrimDb(pOutputTrimDb->load());
     gainModule.process(buffer);
 
-    // Step 2: Saturation
-    saturationModule.setDrive(apvts.getRawParameterValue(satDrive.getParamID())->load());
-    saturationModule.setMix(apvts.getRawParameterValue(satMix.getParamID())->load());
-    saturationModule.setTone(apvts.getRawParameterValue(satTone.getParamID())->load());
+    saturationModule.setDrive(pSatDrive->load());
+    saturationModule.setMix(pSatMix->load());
+    saturationModule.setTone(pSatTone->load());
     saturationModule.process(buffer);
 
-    // Step 3: TimbreFilter
-    timbreFilter.setCutoff(apvts.getRawParameterValue(timbreCutoff.getParamID())->load());
-    timbreFilter.setResonance(apvts.getRawParameterValue(timbreResonance.getParamID())->load());
-    timbreFilter.setDrivePreDb(apvts.getRawParameterValue(timbreDrivePre.getParamID())->load());
+    timbreFilter.setCutoff(pTimbreCutoff->load());
+    timbreFilter.setResonance(pTimbreResonance->load());
+    timbreFilter.setDrivePreDb(pTimbreDrivePre->load());
     timbreFilter.process(buffer);
 
-    // Step 4: Vibrato
-    vibratoModule.setRate(apvts.getRawParameterValue(vibratoRate.getParamID())->load());
-    vibratoModule.setDepth(apvts.getRawParameterValue(vibratoDepth.getParamID())->load());
-    vibratoModule.setFadeInMs(apvts.getRawParameterValue(vibratoFadeIn.getParamID())->load());
-    vibratoModule.process(buffer);
-
-    // Save dry signal (after new pre-processing modules, before reverb send)
+    // saveDry here: dry = input-conditioned, not reverb or tail modulation
     dryWetMixer.saveDry(buffer);
 
     // ===== PANEL 1: INPUT =====
-    inputFilter.setLoCutEnabled(apvts.getRawParameterValue(loCutEnabled.getParamID())->load() > 0.5f);
-    inputFilter.setHiCutEnabled(apvts.getRawParameterValue(hiCutEnabled.getParamID())->load() > 0.5f);
-    inputFilter.setLoCutFreq(apvts.getRawParameterValue(loCutFreq.getParamID())->load());
-    inputFilter.setHiCutFreq(apvts.getRawParameterValue(hiCutFreq.getParamID())->load());
-    inputFilter.setHiCutQ(apvts.getRawParameterValue(hiCutQ.getParamID())->load());
+    inputFilter.setLoCutEnabled(pLoCutEnabled->load() > 0.5f);
+    inputFilter.setHiCutEnabled(pHiCutEnabled->load() > 0.5f);
+    smoothLoCutFreq.setTargetValue(pLoCutFreq->load());
+    smoothHiCutFreq.setTargetValue(pHiCutFreq->load());
+    inputFilter.setLoCutFreq(smoothLoCutFreq.skip(numSamples));
+    inputFilter.setHiCutFreq(smoothHiCutFreq.skip(numSamples));
+    inputFilter.setHiCutQ(pHiCutQ->load());
     inputFilter.process(buffer);
 
-    predelayModule.setDelayMs(apvts.getRawParameterValue(PluginParamIDs::predelay.getParamID())->load());
+    predelayModule.setDelayMs(pPredelay->load());
     predelayModule.process(buffer);
-    // buffer = filtered + predelayed dry signal (FDN input)
 
     // ===== PANEL 2: EARLY REFLECTIONS (parallel path — B1 fix) =====
-    // Runs on the predelayed dry signal; ER-only output written to erOutputBuffer.
-    // This keeps reflectGain and diffuseGain independently applicable.
-    earlyReflections.setEnabled(apvts.getRawParameterValue(erEnabled.getParamID())->load() > 0.5f);
-    earlyReflections.setAmount((apvts.getRawParameterValue(erAmount.getParamID())->load() - 2.0f) / 53.0f);
-    earlyReflections.setRate(apvts.getRawParameterValue(erRate.getParamID())->load());
-    earlyReflections.setShape(apvts.getRawParameterValue(erShape.getParamID())->load());
-    erOutputBuffer.setSize(numChannels, numSamples, false, false, true);
+    earlyReflections.setEnabled(pErEnabled->load() > 0.5f);
+    earlyReflections.setAmount((pErAmount->load() - 2.0f) / 53.0f);
+    earlyReflections.setRate(pErRate->load());
+    earlyReflections.setShape(pErShape->load());
     earlyReflections.processOut(buffer, erOutputBuffer);
-    // erOutputBuffer = ER contribution only; buffer still = predelayed dry
 
     // ===== PANEL 3: DIFFUSION NETWORK + DECAY =====
-    bool isFrozen = apvts.getRawParameterValue(PluginParamIDs::freeze.getParamID())->load() > 0.5f;
-    fdnReverb.setFrozen(isFrozen);
-    fdnReverb.setDecayMs(smoothDecay.skip(numSamples));   // B4: smoothed decay
-    fdnReverb.setDiffusion(apvts.getRawParameterValue(diffusion.getParamID())->load());
-    fdnReverb.setSize(apvts.getRawParameterValue(PluginParamIDs::size.getParamID())->load());
-    fdnReverb.setDamping(apvts.getRawParameterValue(damping.getParamID())->load());
-    fdnReverb.setFeedback(apvts.getRawParameterValue(feedback.getParamID())->load());
-    fdnReverb.setCrossoverFreq(apvts.getRawParameterValue(crossoverFreq.getParamID())->load());
-    fdnReverb.setReverbMode(static_cast<int>(apvts.getRawParameterValue(reverbMode.getParamID())->load()));
-    fdnReverb.setHighFilterType(apvts.getRawParameterValue(highFilterType.getParamID())->load() > 0.5f);
-    fdnReverb.setInputScale(apvts.getRawParameterValue(PluginParamIDs::scale.getParamID())->load());
-    fdnReverb.setFlatEnabled(apvts.getRawParameterValue(PluginParamIDs::flatEnabled.getParamID())->load() > 0.5f);
-    fdnReverb.setCutEnabled(apvts.getRawParameterValue(PluginParamIDs::cutEnabled.getParamID())->load() > 0.5f);
-    fdnReverb.setDensity(static_cast<int>(apvts.getRawParameterValue(density.getParamID())->load()));
+    fdnReverb.setFrozen(pFreeze->load() > 0.5f);
+    fdnReverb.setDecayMs(smoothDecay.skip(numSamples));
+
+    // Stable FDN parameters — only push to DSP when value actually changes.
+    // Avoids redundant coefficient recalculation every block.
+    if (auto v = pDiffusion->load();      v != lastDiffusion)     { fdnReverb.setDiffusion(v);                    lastDiffusion = v; }
+    if (auto v = pSize->load();           v != lastSize)           { fdnReverb.setSize(v);                         lastSize = v; }
+    if (auto v = pDamping->load();        v != lastDamping)        { fdnReverb.setDamping(v);                      lastDamping = v; }
+    // Sustain: hold the tail by boosting feedback to near-unity; still lets new input through
+    {
+        const bool sustain = sustainFromMidi || (pSustainEnabled->load() > 0.5f);
+        const float targetFeedback = sustain ? 0.9998f : pFeedback->load();
+        if (targetFeedback != lastFeedback) { fdnReverb.setFeedback(targetFeedback); lastFeedback = targetFeedback; }
+    }
+    if (auto v = pCrossoverFreq->load();  v != lastCrossoverFreq)  { fdnReverb.setCrossoverFreq(v);                lastCrossoverFreq = v; }
+    if (auto v = pReverbMode->load();     v != lastReverbMode)     { fdnReverb.setReverbMode(static_cast<int>(v)); lastReverbMode = v; }
+    if (auto v = pHighFilterType->load(); v != lastHighFilterType) { fdnReverb.setHighFilterType(v > 0.5f);        lastHighFilterType = v; }
+    if (auto v = pScale->load();          v != lastScale)          { fdnReverb.setInputScale(v);                   lastScale = v; }
+    if (auto v = pFlatEnabled->load();    v != lastFlatEnabled)    { fdnReverb.setFlatEnabled(v > 0.5f);           lastFlatEnabled = v; }
+    if (auto v = pCutEnabled->load();     v != lastCutEnabled)     { fdnReverb.setCutEnabled(v > 0.5f);            lastCutEnabled = v; }
+    if (auto v = pDensity->load();        v != lastDensity)        { fdnReverb.setDensity(static_cast<int>(v));    lastDensity = v; }
+
+    // ── Decay-proportional input scaling ──
+    // Prevents FDN tank saturation when many notes overlap at long decay settings.
+    // Steady-state energy ∝ 1/(1−g) where g is the per-line feedback gain.
+    // We compensate so the tank energy stays constant at any decay value.
+    // Reference point: 1500 ms (APVTS default) → inputGain = 1.0.
+    // Longer decay → lower inputGain; shorter decay → capped at 1.0 (no boost).
+    {
+        const float L_avg_sec  = 0.01772f  // avg BASE_DELAY at 44100 Hz in seconds
+                               * (static_cast<float>(getSampleRate()) / 44100.0f)
+                               * (0.5f + pSize->load());       // apply current size scaling
+        const float decayS     = juce::jmax(0.2f, pDecay->load() / 1000.0f);
+        const float fb         = pFeedback->load();
+        const float gNow       = std::pow(10.0f, -3.0f * L_avg_sec / decayS) * fb;
+        const float gRef       = std::pow(10.0f, -3.0f * L_avg_sec / 1.5f)   * fb; // 1500 ms ref
+        const float inputGain  = juce::jmin(1.0f,
+                                     (1.0f - juce::jmin(gNow, 0.9998f)) /
+                                     juce::jmax(1.0f - juce::jmin(gRef, 0.9998f), 0.0001f));
+        buffer.applyGain(inputGain);
+    }
+
     fdnReverb.process(buffer);
-    // buffer = FDN reverb output
 
     // Apply diffuseGain to FDN tail; add reflectGain-scaled ER separately (B1 fix)
-    float dGain = juce::Decibels::decibelsToGain(smoothDiffuseGain.skip(numSamples));
-    float rGain = juce::Decibels::decibelsToGain(smoothReflectGain.skip(numSamples));
+    const float dGain = juce::Decibels::decibelsToGain(smoothDiffuseGain.skip(numSamples));
+    const float rGain = juce::Decibels::decibelsToGain(smoothReflectGain.skip(numSamples));
     buffer.applyGain(dGain);
     for (int ch = 0; ch < numChannels; ++ch)
         buffer.addFrom(ch, 0, erOutputBuffer, ch, 0, numSamples, rGain);
 
-    // Chorus subsection
-    bool chorusOn = apvts.getRawParameterValue(chorusEnabled.getParamID())->load() > 0.5f;
-    chorusModule.setAmount(apvts.getRawParameterValue(chorusAmount.getParamID())->load());
-    chorusModule.setRate(apvts.getRawParameterValue(chorusRate.getParamID())->load());
-    if (chorusOn) chorusModule.process(buffer);
+    // ─────────────────────────────────────────────────────────────────────────
+    // TAIL MODULATION (shimmer section): Vibrato → PitchShifter → Chorus
+    // ─────────────────────────────────────────────────────────────────────────
+
+    vibratoModule.setRate(pVibratoRate->load());
+    vibratoModule.setDepth(pVibratoDepth->load());
+    vibratoModule.setFadeInMs(pVibratoFadeIn->load());
+    vibratoModule.process(buffer);
+
+    pitchShifter.setFrequency(pPitchFrequency->load());
+    pitchShifter.setOctaveStep(pPitchOctaveStep->load() > 0.5f);
+    pitchShifter.process(buffer);
+
+    chorusModule.setEnabled(pChorusEnabled->load() > 0.5f);
+    chorusModule.setAmount(pChorusAmount->load());
+    chorusModule.setRate(pChorusRate->load());
+    chorusModule.process(buffer);
+
+    // ── Cut Now: edge-detect rising edge → fade wet signal out, clear DSP, fade back in ──
+    {
+        const float cutNowVal = pCutNow->load();
+        if (cutNowVal > 0.5f && lastCutNowValue <= 0.5f)
+            cutNowState = CutNowState::FadingOut;
+        lastCutNowValue = cutNowVal;
+
+        if (cutNowState != CutNowState::Idle) {
+            auto* const* chans = buffer.getArrayOfWritePointers();
+            for (int i = 0; i < numSamples; ++i) {
+                if (cutNowState == CutNowState::FadingOut) {
+                    cutNowGain -= cutNowFadeOutRate;
+                    if (cutNowGain <= 0.0f) {
+                        cutNowGain = 0.0f;
+                        fdnReverb.reset();
+                        vibratoModule.reset();
+                        pitchShifter.reset();
+                        chorusModule.reset();
+                        earlyReflections.reset();
+                        predelayModule.reset();
+                        cutNowState = CutNowState::FadingIn;
+                    }
+                } else {
+                    cutNowGain += cutNowFadeInRate;
+                    if (cutNowGain >= 1.0f) { cutNowGain = 1.0f; cutNowState = CutNowState::Idle; }
+                }
+                for (int ch = 0; ch < numChannels; ++ch)
+                    chans[ch][i] *= cutNowGain;
+            }
+        }
+    }
 
     // ===== PANEL 5: OUTPUT =====
-    stereoWidener.setWidth(apvts.getRawParameterValue(stereo.getParamID())->load() / 120.0f);
+    stereoWidener.setWidth(pStereo->load() / 120.0f);
     stereoWidener.process(buffer);
 
-    dryWetMixer.setMix(apvts.getRawParameterValue(dryWet.getParamID())->load() / 100.0f);
+    dryWetMixer.setMix(pDryWet->load() / 100.0f);
     dryWetMixer.mixToOutput(buffer);
 }
 

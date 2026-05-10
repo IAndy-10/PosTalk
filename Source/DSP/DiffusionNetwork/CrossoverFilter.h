@@ -38,7 +38,9 @@ private:
     float  damping    = 0.5f;
     bool   useShelving = false;
 
-    double coeff = 0.5; // one-pole LP coefficient (shared by both modes)
-    double z1    = 0.0;
+    double coeff        = 0.5; // target one-pole LP coefficient
+    double smoothedCoeff = 0.5; // per-sample ramped toward coeff to prevent abrupt shifts
+    double smoothK      = 0.001; // set in prepare() to ~20 ms time constant
+    double z1           = 0.0;
 };
 

@@ -49,10 +49,18 @@ export const params = {
     timbreResonance: writable(0.148),  // 0.7071 in 0.5–10 range, skew 0.5
     timbreDrivePre:  writable(0),      // 0 dB in 0–12 dB range
 
-    // Vibrato (Step 4)
+    // Vibrato (shimmer section)
     vibratoRate:   writable(0.49),   // 2 Hz in 0.1–8 Hz range, skew 0.5
     vibratoDepth:  writable(0),      // 0–1, default off
     vibratoFadeIn: writable(0.447),  // 100 ms in 0–500 ms range, skew 0.5
+
+    // Pitch Shifter (shimmer section, Module 6)
+    pitchFrequency:  writable(0.447),  // 440 Hz unity: ((440-110)/1650)^0.5 ≈ 0.447
+    pitchOctaveStep: writable(0),      // 0 = continuous, 1 = octave snap
+
+    // Performance controls
+    sustainEnabled: writable(0),  // 0 = off, 1 = hold reverb tail
+    cutNow:         writable(0),  // momentary — triggers on rising edge
 
     // Bottom Utility Row
     predelay: writable(0.08),
@@ -157,6 +165,10 @@ export const chorusRateDisplay = derived(params.chorusRate,
 // size: 0–1 stored, log display mapping → 0.22–500
 export const sizeDisplay = derived(params.size,
     $v => (0.22 * Math.pow(500.0 / 0.22, $v)).toFixed(2));
+
+// pitchFrequency: 110–1760 Hz, skew=0.5
+export const pitchFreqDisplay = derived(params.pitchFrequency,
+    $v => Math.round(110 + 1650 * Math.pow($v, 1.0 / 0.5)));
 
 // crossoverFreq: 200–8000 Hz, skew=0.5 (kept for SVG node / UI use)
 export const crossoverHz = derived(params.crossoverFreq,

@@ -1,4 +1,5 @@
 #include "DiffusionNetwork.h"
+#include <cmath>
 
 void DiffusionNetwork::prepare(double sampleRate) {
     double ratio = sampleRate / 44100.0;
@@ -11,7 +12,8 @@ void DiffusionNetwork::prepare(double sampleRate) {
 }
 
 void DiffusionNetwork::setDiffusion(float d) {
-    diffusion = d;
+    // Square-root curve: finer control at low values where density matters most.
+    diffusion = std::sqrt(juce::jlimit(0.0f, 1.0f, d));
     for (auto& stage : stages)
         stage.setCoefficient(diffusion);
 }

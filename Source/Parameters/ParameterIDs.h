@@ -68,6 +68,14 @@ namespace PluginParamIDs {
     const juce::ParameterID vibratoDepth  { "vibratoDepth",  1 };
     const juce::ParameterID vibratoFadeIn { "vibratoFadeIn", 1 };
 
+    // ===== MODULE 6: PITCH SHIFTER =====
+    const juce::ParameterID pitchFrequency  { "pitchFrequency",  1 };  // 110–1760 Hz; 440 = unity
+    const juce::ParameterID pitchOctaveStep { "pitchOctaveStep", 1 };  // bool: snap to octave steps
+
+    // ===== PERFORMANCE CONTROLS =====
+    const juce::ParameterID sustainEnabled { "sustainEnabled", 1 };  // bool: hold reverb tail indefinitely
+    const juce::ParameterID cutNow        { "cutNow",         1 };  // bool: momentary — fade + clear buffers
+
     // ===== STAGE 2: MACRO Y =====
     const juce::ParameterID macroY { "macroY", 1 };
 

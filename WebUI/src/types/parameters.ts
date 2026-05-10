@@ -21,6 +21,10 @@ export type ParameterId =
     | 'satDrive' | 'satMix' | 'satTone'
     // Module 5 — Modulation (3)
     | 'vibratoRate' | 'vibratoDepth' | 'vibratoFadeIn'
+    // Module 6 — Pitch Shifter (2)
+    | 'pitchFrequency' | 'pitchOctaveStep'
+    // Performance controls (2)
+    | 'sustainEnabled' | 'cutNow'
     // Stage 2 — Macro Y (1)
     | 'macroY'
     // Y Amount — modulation depth per parameter (8)
@@ -28,7 +32,7 @@ export type ParameterId =
     | 'vibratoDepthYAmt' | 'dryWetYAmt' | 'decayYAmt' | 'dampingYAmt'
     // Gesture mode toggle (1)
     | 'gestureModeToggle';
-// Total: 52 unique IDs (31 original + 21 new), matching ParameterIDs.h exactly.
+// Total: 56 unique IDs, matching ParameterIDs.h exactly.
 
 export interface PluginParameter {
     id: ParameterId;

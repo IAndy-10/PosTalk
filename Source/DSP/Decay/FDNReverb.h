@@ -46,9 +46,18 @@ private:
     DiffusionNetwork               diffusion;
     std::array<LFO, N>             modLFOs;
 
-    std::array<float, N> decayGain  {};
-    std::array<int, N>   delayLens  {};
-    std::array<float, N> modDepth   {};
+    // normalDecayGain: RT60-derived gain per line (never frozen-clamped).
+    // In process(), blended with 0.9999f via freezeBlend for click-free freeze toggle.
+    std::array<float, N> normalDecayGain {};
+    std::array<int, N>   delayLens       {};
+    std::array<float, N> modDepth        {};
+
+    // Per-line delay length smoother: ramps over 50 ms when setSize() is called,
+    // eliminating the click that would occur from an abrupt delay-length change.
+    std::array<juce::SmoothedValue<float>, N> smoothDelayLens;
+
+    // Crossfades from normal decay to frozen (0.9999f) over ~20 ms.
+    juce::SmoothedValue<float> freezeBlend { 0.0f };
 
     float decayMs       = 1500.0f;
     float dampAmount    = 0.5f;
@@ -56,13 +65,12 @@ private:
     float sizeScale     = 0.5f;
     float crossFreq     = 3000.0f;
     float feedback      = 0.8f;
-    float inputScale    = 0.5f;  // blend: 0=raw input, 1=fully diffused (scale param)
+    float inputScale    = 0.5f;
     bool  frozen        = false;
-    bool  flatEnabledFlag = false; // freeze sub-mode: bypass CrossoverFilters
-    bool  cutEnabledFlag  = false; // freeze sub-mode: block new input
-    int   mode          = 0; // 0=High, 1=Low
+    bool  flatEnabledFlag = false;
+    bool  cutEnabledFlag  = false;
+    int   mode          = 0;
 
-    static constexpr float MOD_DEPTH_BASE = 2.0f; // samples of modulation
-    static constexpr float MOD_FREQ_BASE  = 0.31f; // Hz (different per line)
+    static constexpr float MOD_DEPTH_BASE = 2.0f;
+    static constexpr float MOD_FREQ_BASE  = 0.31f;
 };
-

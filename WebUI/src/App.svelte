@@ -13,6 +13,8 @@
         satDrive, satMix, satTone,
         timbreCutoff, timbreResonance, timbreDrivePre,
         vibratoRate, vibratoDepth, vibratoFadeIn,
+        pitchFrequency, pitchOctaveStep,
+        sustainEnabled,
         loCutEnabled, hiCutEnabled, loCutFreq, hiCutFreq,
         erEnabled, erAmount, erRate, erShape,
         reverbMode, crossoverFreq, diffusion, scale, decay, damping, feedback,
@@ -21,7 +23,138 @@
         predelay, smooth, size, freeze, flatEnabled, cutEnabled, stereo, density,
     } = params;
 
-    let bypassed = false;
+    let bypassed    = false;
+    let activePreset: number | null = null;
+
+    // ── Presets: journey from dark (1) to bright (6) ──────────────────────────
+    // All values are normalized APVTS 0-1 (same units the store and bridge expect).
+    // Conversion reference (matches App.svelte Number bindings):
+    //   decay       200–60000 ms  skew 0.3
+    //   crossoverFreq 200–8000 Hz skew 0.5
+    //   timbreCutoff  20–20000 Hz skew 0.3
+    //   predelay    0–500 ms      skew 0.5
+    //   erAmount    2–55          skew 0.5
+    //   chorusRate  0.01–8 Hz     skew 0.5
+    //   others: linear or raw 0-1
+    const PRESET_NAMES = ['Abyss', 'Chamber', 'Room', 'Studio', 'Hall', 'Infinity'];
+    const PRESETS: Record<string, number>[] = [
+      // ── 1 · Abyss ── ultra-dark, compressed, cave-like
+      {
+        decay: 0.22,  damping: 0.90, crossoverFreq: 0.16, size: 0.20,
+        diffusion: 0.30, feedback: 0.72, dryWet: 0.60, reverbMode: 1,
+        scale: 0.25,  density: 0,   smooth: 0, highFilterType: 0,
+        satDrive: 0.30, satMix: 0.35, satTone: 0.25,
+        timbreCutoff: 0.38, timbreResonance: 0.15, timbreDrivePre: 0,
+        predelay: 0.10, stereo: 0.33,
+        erEnabled: 0,  erAmount: 0.05, erShape: 0.3,  erRate: 0.40,
+        chorusEnabled: 0, chorusAmount: 0, chorusRate: 0.43,
+        reflectGain: 0.50, diffuseGain: 0.67,
+        gainDb: 0.667, outputTrimDb: 1,
+        freeze: 0, flatEnabled: 0, cutEnabled: 0,
+        loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 0, hiCutFreq: 0.75,
+        vibratoRate: 0.49, vibratoDepth: 0, vibratoFadeIn: 0.45,
+        pitchFrequency: 0.447, pitchOctaveStep: 0,
+        sustainEnabled: 0,
+      },
+      // ── 2 · Chamber ── dark, intimate, warm
+      {
+        decay: 0.32,  damping: 0.72, crossoverFreq: 0.28, size: 0.35,
+        diffusion: 0.50, feedback: 0.75, dryWet: 0.50, reverbMode: 1,
+        scale: 0.35,  density: 0.33, smooth: 0, highFilterType: 0,
+        satDrive: 0.20, satMix: 0.20, satTone: 0.40,
+        timbreCutoff: 0.54, timbreResonance: 0.15, timbreDrivePre: 0,
+        predelay: 0.155, stereo: 0.46,
+        erEnabled: 1,  erAmount: 0.55, erShape: 0.3,  erRate: 0.43,
+        chorusEnabled: 0, chorusAmount: 0, chorusRate: 0.43,
+        reflectGain: 0.61, diffuseGain: 0.72,
+        gainDb: 0.667, outputTrimDb: 1,
+        freeze: 0, flatEnabled: 0, cutEnabled: 0,
+        loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 0, hiCutFreq: 0.75,
+        vibratoRate: 0.49, vibratoDepth: 0, vibratoFadeIn: 0.45,
+        pitchFrequency: 0.447, pitchOctaveStep: 0,
+        sustainEnabled: 0,
+      },
+      // ── 3 · Room ── neutral, balanced, natural
+      {
+        decay: 0.35,  damping: 0.55, crossoverFreq: 0.48, size: 0.48,
+        diffusion: 0.60, feedback: 0.78, dryWet: 0.45, reverbMode: 1,
+        scale: 0.50,  density: 0.67, smooth: 0, highFilterType: 0,
+        satDrive: 0.10, satMix: 0.10, satTone: 0.60,
+        timbreCutoff: 0.66, timbreResonance: 0.15, timbreDrivePre: 0,
+        predelay: 0.20, stereo: 0.54,
+        erEnabled: 1,  erAmount: 0.66, erShape: 0.5,  erRate: 0.59,
+        chorusEnabled: 0, chorusAmount: 0, chorusRate: 0.43,
+        reflectGain: 0.69, diffuseGain: 0.78,
+        gainDb: 0.667, outputTrimDb: 1,
+        freeze: 0, flatEnabled: 0, cutEnabled: 0,
+        loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 0, hiCutFreq: 0.75,
+        vibratoRate: 0.49, vibratoDepth: 0, vibratoFadeIn: 0.45,
+        pitchFrequency: 0.447, pitchOctaveStep: 0,
+        sustainEnabled: 0,
+      },
+      // ── 4 · Studio ── neutral-bright, clean, open
+      {
+        decay: 0.40,  damping: 0.38, crossoverFreq: 0.70, size: 0.55,
+        diffusion: 0.68, feedback: 0.82, dryWet: 0.40, reverbMode: 0,
+        scale: 0.55,  density: 1,   smooth: 0, highFilterType: 0,
+        satDrive: 0,  satMix: 0,    satTone: 0.80,
+        timbreCutoff: 0.76, timbreResonance: 0.15, timbreDrivePre: 0,
+        predelay: 0.237, stereo: 0.63,
+        erEnabled: 1,  erAmount: 0.79, erShape: 0.5,  erRate: 0.59,
+        chorusEnabled: 1, chorusAmount: 0.15, chorusRate: 0.43,
+        reflectGain: 0.75, diffuseGain: 0.83,
+        gainDb: 0.667, outputTrimDb: 1,
+        freeze: 0, flatEnabled: 0, cutEnabled: 0,
+        loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 0, hiCutFreq: 0.75,
+        vibratoRate: 0.49, vibratoDepth: 0, vibratoFadeIn: 0.45,
+        pitchFrequency: 0.447, pitchOctaveStep: 0,
+        sustainEnabled: 0,
+      },
+      // ── 5 · Hall ── bright, large, spatial
+      {
+        decay: 0.50,  damping: 0.20, crossoverFreq: 0.86, size: 0.72,
+        diffusion: 0.75, feedback: 0.85, dryWet: 0.35, reverbMode: 0,
+        scale: 0.70,  density: 1,   smooth: 0, highFilterType: 0,
+        satDrive: 0,  satMix: 0,    satTone: 1.0,
+        timbreCutoff: 0.86, timbreResonance: 0.15, timbreDrivePre: 0,
+        predelay: 0.265, stereo: 0.75,
+        erEnabled: 1,  erAmount: 0.90, erShape: 0.6,  erRate: 0.59,
+        chorusEnabled: 1, chorusAmount: 0.20, chorusRate: 0.39,
+        reflectGain: 0.78, diffuseGain: 0.89,
+        gainDb: 0.667, outputTrimDb: 1,
+        freeze: 0, flatEnabled: 0, cutEnabled: 0,
+        loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 0, hiCutFreq: 0.75,
+        vibratoRate: 0.49, vibratoDepth: 0, vibratoFadeIn: 0.45,
+        pitchFrequency: 0.447, pitchOctaveStep: 0,
+        sustainEnabled: 0,
+      },
+      // ── 6 · Infinity ── vast, shimmering, borderless
+      {
+        decay: 0.77,  damping: 0.08, crossoverFreq: 0.97, size: 0.90,
+        diffusion: 0.85, feedback: 0.90, dryWet: 0.28, reverbMode: 0,
+        scale: 0.90,  density: 1,   smooth: 0, highFilterType: 0,
+        satDrive: 0,  satMix: 0,    satTone: 1.0,
+        timbreCutoff: 0.94, timbreResonance: 0.15, timbreDrivePre: 0,
+        predelay: 0.316, stereo: 0.92,
+        erEnabled: 1,  erAmount: 0.98, erShape: 0.75, erRate: 0.59,
+        chorusEnabled: 1, chorusAmount: 0.25, chorusRate: 0.31,
+        reflectGain: 0.83, diffuseGain: 0.94,
+        gainDb: 0.667, outputTrimDb: 1,
+        freeze: 0, flatEnabled: 0, cutEnabled: 0,
+        loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 0, hiCutFreq: 0.75,
+        vibratoRate: 0.42, vibratoDepth: 0.15, vibratoFadeIn: 0.45,
+        pitchFrequency: 1.0, pitchOctaveStep: 1,  // +1 octave snap (880 Hz) for shimmer
+        sustainEnabled: 0,
+      },
+    ];
+
+    function applyPreset(idx: number) {
+      activePreset = idx;
+      const p = PRESETS[idx];
+      for (const [k, v] of Object.entries(p)) {
+        send(k as ParameterId, v);
+      }
+    }
 
     function send(id: ParameterId, v: number) {
         if (!isFinite(v) || isNaN(v)) return;
@@ -34,6 +167,12 @@
         Math.min(1, Math.max(0, (v - mn) / (mx - mn)));
     const ns = (v: number, mn: number, mx: number, sk: number) =>
         Math.min(1, Math.pow(Math.max(0, (v - mn) / (mx - mn)), sk));
+
+    // Cut Now: momentary — send rising edge then auto-reset after 100 ms
+    function handleCutNow() {
+        send('cutNow', 1);
+        setTimeout(() => send('cutNow', 0), 100);
+    }
 
     // normalized 0-1 → display value
     const dl = (n: number, mn: number, mx: number) => mn + (mx - mn) * n;
@@ -65,10 +204,16 @@
         <div class="side-card">
           <div class="card-title">Presets</div>
           <div class="presets-grid">
-            {#each [1,2,3,4,5,6] as n}
-              <button class="preset-btn">{n}</button>
+            {#each PRESET_NAMES as name, i}
+              <button class="preset-btn" class:active={activePreset === i}
+                title={name} on:click={() => applyPreset(i)}>
+                {i + 1}
+              </button>
             {/each}
           </div>
+          {#if activePreset !== null}
+            <div class="preset-name">{PRESET_NAMES[activePreset]}</div>
+          {/if}
         </div>
 
         <!-- Camera -->
@@ -103,6 +248,15 @@
         <!-- ─ REVERB ─ -->
         <div class="param-panel reverb-panel">
           <div class="card-title">Reverb</div>
+
+          <div class="group-label">Performance</div>
+          <div class="num-row perf-row">
+            <Number label="Sustain"
+              value={Math.round($sustainEnabled)}
+              min={0} max={1} step={1} decimals={0}
+              on:change={e => send('sustainEnabled', e.detail.value)} />
+            <button class="cut-btn" on:click={handleCutNow}>CUT</button>
+          </div>
 
           <div class="group-label">Core</div>
           <div class="num-row">
@@ -305,9 +459,11 @@
           </div>
         </div>
 
-        <!-- ─ VIBRATO ─ -->
+        <!-- ─ SHIMMER ─ -->
         <div class="param-panel">
-          <div class="card-title">Vibrato</div>
+          <div class="card-title">Shimmer</div>
+
+          <div class="group-label">Vibrato</div>
           <div class="num-row">
             <Number label="Rate"
               value={+ds($vibratoRate, 0.1, 8, 0.5).toFixed(2)}
@@ -321,6 +477,18 @@
               value={+ds($vibratoFadeIn, 0, 500, 0.5).toFixed(0)}
               min={0} max={500} step={1} decimals={0} unit=" ms"
               on:change={e => send('vibratoFadeIn', ns(e.detail.value, 0, 500, 0.5))} />
+          </div>
+
+          <div class="group-label">Pitch Shifter</div>
+          <div class="num-row">
+            <Number label="Frequency"
+              value={Math.round(110 + 1650 * Math.pow(Math.max(0, $pitchFrequency), 1 / 0.5))}
+              min={110} max={1760} step={1} decimals={0} unit=" Hz"
+              on:change={e => send('pitchFrequency', ns(e.detail.value, 110, 1760, 0.5))} />
+            <Number label="Oct Step"
+              value={Math.round($pitchOctaveStep)}
+              min={0} max={1} step={1} decimals={0}
+              on:change={e => send('pitchOctaveStep', e.detail.value)} />
           </div>
         </div>
 
@@ -406,6 +574,7 @@
 
   .camera-card {
     flex: 1;
+    height: 100%;           /* definite height so Camera's height:100% resolves */
     border-radius: 14px;
     overflow: hidden;
     border: 1px solid rgba(255,255,255,0.09);
@@ -440,6 +609,17 @@
     cursor: pointer; transition: background 0.15s;
   }
   .preset-btn:hover { background: rgba(255,110,40,0.18); color: rgba(255,170,100,0.9); }
+  .preset-btn.active {
+    background: rgba(255,110,40,0.28);
+    border-color: rgba(255,110,40,0.55);
+    color: rgba(255,180,110,1);
+    box-shadow: 0 0 8px rgba(255,110,40,0.3);
+  }
+  .preset-name {
+    font-family: 'Jost', sans-serif; font-size: 0.48rem; font-weight: 300;
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: rgba(255,140,60,0.55); text-align: center; margin-top: 2px;
+  }
 
   .gesture-icons { display: flex; gap: 6px; flex-shrink: 0; }
   .icon-btn {
@@ -483,5 +663,22 @@
 
   .num-row {
     display: flex; flex-wrap: wrap; gap: 6px 10px;
+  }
+
+  .perf-row { align-items: center; }
+
+  .cut-btn {
+    padding: 3px 10px; border-radius: 6px;
+    background: rgba(220, 60, 40, 0.18);
+    border: 1px solid rgba(220, 60, 40, 0.4);
+    color: rgba(255, 140, 120, 0.85);
+    font-family: 'Jost', sans-serif; font-size: 0.52rem; font-weight: 300;
+    letter-spacing: 0.2em; text-transform: uppercase;
+    cursor: pointer; transition: background 0.1s, box-shadow 0.1s;
+  }
+  .cut-btn:hover { background: rgba(220, 60, 40, 0.35); }
+  .cut-btn:active {
+    background: rgba(220, 60, 40, 0.55);
+    box-shadow: 0 0 8px rgba(220, 60, 40, 0.4);
   }
 </style>

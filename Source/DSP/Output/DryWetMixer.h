@@ -1,8 +1,10 @@
 #pragma once
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <cmath>
 
 // Mixes a dry (input) buffer with a wet (processed) buffer.
 // mix = 0.0 → all dry; mix = 1.0 → all wet.
+// Equal-power curve (sqrt) preserves perceptual loudness at mid-point.
 // Per-sample interpolation smooths transitions when the knob changes quickly.
 class DryWetMixer {
 public:
@@ -40,8 +42,10 @@ public:
             auto* dry = dryBuffer.getReadPointer(ch);
 
             for (int i = 0; i < samples; ++i) {
-                float w = previous + increment * static_cast<float>(i);
-                wet[i] = (1.0f - w) * dry[i] + w * wet[i];
+                float w       = previous + increment * static_cast<float>(i);
+                float wetGain = std::sqrt(juce::jmax(0.0f, w));
+                float dryGain = std::sqrt(juce::jmax(0.0f, 1.0f - w));
+                wet[i] = dryGain * dry[i] + wetGain * wet[i];
             }
         }
 
