@@ -32,9 +32,13 @@ void FDNReverb::prepare(double sampleRate) {
     diffusion.prepare(sampleRate);
     diffusion.setDiffusion(diffAmount);
 
-    // Freeze crossfade smoother: 0 = normal, 1 = frozen, 20 ms transition.
-    freezeBlend.reset(sampleRate, 0.02);
-    freezeBlend.setCurrentAndTargetValue(0.0f);
+    // Freeze crossfade smoother: 0 = normal, 1 = frozen, 50 ms transition.
+    freezeBlend.reset(sampleRate, 0.05);
+    freezeBlend.setCurrentAndTargetValue(frozen ? 1.0f : 0.0f);
+
+    // Flat crossfade smoother: 0 = filtered, 1 = bypass damping filter, 30 ms transition.
+    flatBlend.reset(sampleRate, 0.03);
+    flatBlend.setCurrentAndTargetValue(flatEnabledFlag ? 1.0f : 0.0f);
 
     normalDecayGain.fill(0.0f);
     updateDecayGains();
@@ -109,7 +113,10 @@ void FDNReverb::setDensity(int d) {
     diffusion.setNumStages(stageMap[juce::jlimit(0, 3, d)]);
 }
 
-void FDNReverb::setFlatEnabled(bool f) { flatEnabledFlag = f; }
+void FDNReverb::setFlatEnabled(bool f) {
+    flatEnabledFlag = f;
+    flatBlend.setTargetValue(f ? 1.0f : 0.0f);
+}
 void FDNReverb::setCutEnabled(bool c)  { cutEnabledFlag  = c; }
 
 void FDNReverb::updateDecayGains() {
@@ -138,8 +145,13 @@ void FDNReverb::process(juce::AudioBuffer<float>& buffer) {
 
     for (int sampleIdx = 0; sampleIdx < numSamples; ++sampleIdx) {
         // Freeze blend: 0 = normal RT60 decay, 1 = fully frozen (0.9999f per line).
-        // Ramps smoothly so toggling freeze does not produce a click.
-        const float fb = freezeBlend.getNextValue();
+        // Ramps smoothly (50 ms) so toggling freeze does not produce a click.
+        const float fb     = freezeBlend.getNextValue();
+        // Flat blend: 0 = use damping filter, 1 = bypass (flat = remove HF roll-off).
+        // Advanced once per sample; shared across all 8 delay lines this sample.
+        // The filter is ALWAYS computed to keep its IIR state valid — we only crossfade
+        // the output, so re-engaging the filter never causes a state-mismatch click.
+        const float flatB  = flatBlend.getNextValue();
 
         float inL = buffer.getSample(0, sampleIdx);
         float inR = (numChannels >= 2) ? buffer.getSample(1, sampleIdx) : inL;
@@ -161,11 +173,13 @@ void FDNReverb::process(juce::AudioBuffer<float>& buffer) {
             float readPos = smoothDelayLens[i].getNextValue() + mod;
             readPos = std::max(1.0f, readPos);
 
-            y[i] = delayLines[i].readInterpolated(readPos);
+            const float y_raw  = delayLines[i].readInterpolated(readPos);
+            const float y_filt = dampFilters[i].processSample(y_raw); // always run — keeps IIR state fresh
 
-            // Frequency-dependent decay — bypassed when frozen with flat mode active
-            if (!(frozen && flatEnabledFlag))
-                y[i] = dampFilters[i].processSample(y[i]);
+            // Flat: crossfade between filtered and raw output.
+            // effectiveFlat is 0 when not frozen, so filter is always used outside freeze.
+            const float effectiveFlat = flatB * fb;
+            y[i] = y_filt * (1.0f - effectiveFlat) + y_raw * effectiveFlat;
 
             // Blend between normal RT60 decay and frozen sustain (0.9999f).
             const float actualGain = normalDecayGain[i] * (1.0f - fb) + 0.9999f * fb;
@@ -206,4 +220,5 @@ void FDNReverb::reset() {
     }
     diffusion.reset();
     freezeBlend.setCurrentAndTargetValue(frozen ? 1.0f : 0.0f);
+    flatBlend.setCurrentAndTargetValue(flatEnabledFlag ? 1.0f : 0.0f);
 }

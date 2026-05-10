@@ -56,8 +56,10 @@ private:
     // eliminating the click that would occur from an abrupt delay-length change.
     std::array<juce::SmoothedValue<float>, N> smoothDelayLens;
 
-    // Crossfades from normal decay to frozen (0.9999f) over ~20 ms.
+    // Crossfades from normal decay to frozen (0.9999f) over ~50 ms.
     juce::SmoothedValue<float> freezeBlend { 0.0f };
+    // Crossfades dampFilter in/out when flat is toggled (prevents click from stale IIR state).
+    juce::SmoothedValue<float> flatBlend   { 0.0f };
 
     float decayMs       = 1500.0f;
     float dampAmount    = 0.5f;

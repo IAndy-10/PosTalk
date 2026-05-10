@@ -108,6 +108,7 @@ void AudioPluginAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     cutNowGain       = 1.0f;
     lastCutNowValue  = 0.0f;
     sustainFromMidi  = false;
+    lastSustainOutput = false;
 
     // Reset FDN dirty-flag cache — sentinel -1 forces all params to be pushed on the first block
     lastDiffusion = lastSize = lastDamping = lastFeedback = lastCrossoverFreq
@@ -152,6 +153,10 @@ void AudioPluginAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     initSmooth(smoothDecay,        pDecay->load());
     initSmooth(smoothStereo,       pStereo->load());
     initSmooth(smoothDryWet,       pDryWet->load());
+
+    // FDN input gain smoother: 100 ms ramp so frozen↔unfrozen transitions are click-free
+    smoothFdnInputGain.reset(sampleRate, 0.10);
+    smoothFdnInputGain.setCurrentAndTargetValue(1.0f);
 }
 
 void AudioPluginAudioProcessor::releaseResources() {
@@ -170,11 +175,21 @@ void AudioPluginAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                               juce::MidiBuffer& midiMessages) {
     juce::ScopedNoDenormals noDenormals;
 
-    // Parse MIDI CC64 (sustain pedal)
+    // Parse incoming MIDI CC64 (physical sustain pedal — already routed to instrument by DAW)
     for (const auto meta : midiMessages) {
         const auto msg = meta.getMessage();
         if (msg.isController() && msg.getControllerNumber() == 64)
             sustainFromMidi = (msg.getControllerValue() >= 64);
+    }
+
+    // Emit CC64 for UI/gesture sustain on rising/falling edge only.
+    // The physical pedal is handled by the DAW; this covers the gesture layer.
+    // Downstream DAW routing: PosTalk MIDI output → instrument track → instrument holds note.
+    const bool uiSustain = pSustainEnabled->load() > 0.5f;
+    if (uiSustain != lastSustainOutput) {
+        midiMessages.addEvent(
+            juce::MidiMessage::controllerEvent(1, 64, uiSustain ? 127 : 0), 0);
+        lastSustainOutput = uiSustain;
     }
 
     auto totalNumOutputChannels = getTotalNumOutputChannels();
@@ -194,7 +209,7 @@ void AudioPluginAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         smoothDiffuseGain.reset(getSampleRate(), t);
         lastSmoothMode = smoothMode;
     }
-    smoothDecay.setTargetValue(pDecay->load());
+    // smoothDecay target is set in the FDN block below (sustain may override it).
     smoothReflectGain.setTargetValue(pReflectGain->load());
     smoothDiffuseGain.setTargetValue(pDiffuseGain->load());
 
@@ -242,7 +257,12 @@ void AudioPluginAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     earlyReflections.processOut(buffer, erOutputBuffer);
 
     // ===== PANEL 3: DIFFUSION NETWORK + DECAY =====
+    const bool sustainActive = sustainFromMidi || (pSustainEnabled->load() > 0.5f);
     fdnReverb.setFrozen(pFreeze->load() > 0.5f);
+    // Sustain: push decay to maximum so the tail holds without freezing.
+    // The FDN keeps running normally (filters, modulation, input all active)
+    // — sounds like a continuously held note, not a static frozen pad.
+    smoothDecay.setTargetValue(sustainActive ? 60000.0f : pDecay->load());
     fdnReverb.setDecayMs(smoothDecay.skip(numSamples));
 
     // Stable FDN parameters — only push to DSP when value actually changes.
@@ -250,11 +270,12 @@ void AudioPluginAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     if (auto v = pDiffusion->load();      v != lastDiffusion)     { fdnReverb.setDiffusion(v);                    lastDiffusion = v; }
     if (auto v = pSize->load();           v != lastSize)           { fdnReverb.setSize(v);                         lastSize = v; }
     if (auto v = pDamping->load();        v != lastDamping)        { fdnReverb.setDamping(v);                      lastDamping = v; }
-    // Sustain: hold the tail by boosting feedback to near-unity; still lets new input through
+    // Sustain also overrides feedback to 1.0 so normalDecayGain = g×1.0 ≈ 0.998.
+    // Without this, normalDecayGain = g×feedback (e.g. 0.998×0.75 = 0.748) and the
+    // tail decays in ~0.4 s regardless of the 60 s decay target.
     {
-        const bool sustain = sustainFromMidi || (pSustainEnabled->load() > 0.5f);
-        const float targetFeedback = sustain ? 0.9998f : pFeedback->load();
-        if (targetFeedback != lastFeedback) { fdnReverb.setFeedback(targetFeedback); lastFeedback = targetFeedback; }
+        const float targetFb = sustainActive ? 1.0f : pFeedback->load();
+        if (targetFb != lastFeedback) { fdnReverb.setFeedback(targetFb); lastFeedback = targetFb; }
     }
     if (auto v = pCrossoverFreq->load();  v != lastCrossoverFreq)  { fdnReverb.setCrossoverFreq(v);                lastCrossoverFreq = v; }
     if (auto v = pReverbMode->load();     v != lastReverbMode)     { fdnReverb.setReverbMode(static_cast<int>(v)); lastReverbMode = v; }
@@ -266,22 +287,30 @@ void AudioPluginAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     // ── Decay-proportional input scaling ──
     // Prevents FDN tank saturation when many notes overlap at long decay settings.
-    // Steady-state energy ∝ 1/(1−g) where g is the per-line feedback gain.
-    // We compensate so the tank energy stays constant at any decay value.
-    // Reference point: 1500 ms (APVTS default) → inputGain = 1.0.
-    // Longer decay → lower inputGain; shorter decay → capped at 1.0 (no boost).
+    // Uses the *effective* decay (60 s when sustain is active, knob value otherwise)
+    // so the formula accounts for the actual per-line feedback gain in use.
+    // Freeze forces -26 dB regardless; sustain lets the formula run naturally.
+    // The 100 ms smoothed ramp ensures gain transitions are inaudible.
     {
-        const float L_avg_sec  = 0.01772f  // avg BASE_DELAY at 44100 Hz in seconds
-                               * (static_cast<float>(getSampleRate()) / 44100.0f)
-                               * (0.5f + pSize->load());       // apply current size scaling
-        const float decayS     = juce::jmax(0.2f, pDecay->load() / 1000.0f);
-        const float fb         = pFeedback->load();
-        const float gNow       = std::pow(10.0f, -3.0f * L_avg_sec / decayS) * fb;
-        const float gRef       = std::pow(10.0f, -3.0f * L_avg_sec / 1.5f)   * fb; // 1500 ms ref
-        const float inputGain  = juce::jmin(1.0f,
-                                     (1.0f - juce::jmin(gNow, 0.9998f)) /
-                                     juce::jmax(1.0f - juce::jmin(gRef, 0.9998f), 0.0001f));
-        buffer.applyGain(inputGain);
+        float targetInputGain;
+        if (pFreeze->load() > 0.5f) {
+            targetInputGain = 0.05f;  // -26 dB: tank is static, only let a trickle in
+        } else {
+            const float L_avg_sec    = 0.01772f
+                                     * (static_cast<float>(getSampleRate()) / 44100.0f)
+                                     * (0.5f + pSize->load());
+            // Use effective decay and feedback — both may be overridden by sustain.
+            const float effectDecayS = sustainActive ? 60.0f
+                                                     : juce::jmax(0.2f, pDecay->load() / 1000.0f);
+            const float fb           = sustainActive ? 1.0f : pFeedback->load();
+            const float gNow         = std::pow(10.0f, -3.0f * L_avg_sec / effectDecayS) * fb;
+            const float gRef         = std::pow(10.0f, -3.0f * L_avg_sec / 1.5f)         * fb;
+            targetInputGain = juce::jmin(1.0f,
+                                  (1.0f - juce::jmin(gNow, 0.9998f)) /
+                                  juce::jmax(1.0f - juce::jmin(gRef, 0.9998f), 0.0001f));
+        }
+        smoothFdnInputGain.setTargetValue(targetInputGain);
+        buffer.applyGain(smoothFdnInputGain.skip(numSamples));
     }
 
     fdnReverb.process(buffer);

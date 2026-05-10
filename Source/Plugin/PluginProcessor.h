@@ -72,6 +72,7 @@ private:
     juce::SmoothedValue<float> smoothDamping, smoothFeedback;
     juce::SmoothedValue<float> smoothPredelay, smoothStereo, smoothDryWet;
     juce::SmoothedValue<float> smoothChorusAmount, smoothChorusRate;
+    juce::SmoothedValue<float> smoothFdnInputGain;  // ramps gain when frozen state changes
     juce::SmoothedValue<float> smoothCrossoverFreq;
     juce::SmoothedValue<float> smoothReflectGain, smoothDiffuseGain;
     juce::SmoothedValue<float> smoothErAmount, smoothErRate;
@@ -127,7 +128,8 @@ private:
     std::atomic<float>* pCutNow          = nullptr;
 
     // ── Performance control state ──
-    bool sustainFromMidi = false;   // true while MIDI CC64 is held (value >= 64)
+    bool sustainFromMidi   = false;  // true while MIDI CC64 is held (value >= 64)
+    bool lastSustainOutput = false;  // previous UI sustain state — edge-detect for CC64 emission
 
     enum class CutNowState { Idle, FadingOut, FadingIn };
     CutNowState cutNowState      = CutNowState::Idle;
