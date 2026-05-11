@@ -1,172 +1,93 @@
 #include "PitchShifter.h"
 
 // ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
-static inline float wrapBuf(float pos, int size) {
-    const float s = (float)size;
-    while (pos >= s) pos -= s;
-    while (pos <  0) pos += s;
-    return pos;
-}
-
-// ---------------------------------------------------------------------------
 // public
 // ---------------------------------------------------------------------------
 
+float PitchShifter::computeShift(float hz) const noexcept {
+    float shift = hz - kCenterHz;  // linear Hz shift; 0 at 440 Hz
+    if (octaveStep)
+        shift = std::round(shift / kCenterHz) * kCenterHz;  // snap to 0, ±440, ±880 Hz
+    return shift;
+}
+
 void PitchShifter::prepare(double sampleRate) {
-    sr        = sampleRate;
-    grainSize = (int)(kGrainMs  * sampleRate / 1000.0);
-    bufSize   = (int)(kMaxBufMs * sampleRate / 1000.0) + grainSize + 4;
-
-    for (int ch = 0; ch < 2; ++ch) {
-        auto& g = grains[ch];
-        g.buf.assign(bufSize, 0.0f);
-        g.writeIdx      = 0;
-        g.grainPhase[0] = 0.0f;
-        g.grainPhase[1] = 0.5f;  // grain 1 starts half-grain ahead in phase
-        // Place readers at the corresponding positions behind the write head
-        g.readPos[0] = 0.0f;
-        g.readPos[1] = wrapBuf(-(float)grainSize * 0.5f, bufSize);
-    }
-
-    smoothRatio.reset(sampleRate, 0.05);  // 50 ms ramp for continuous mode
-    smoothRatio.setCurrentAndTargetValue(computeRatio(targetHz));
+    sr    = sampleRate;
+    phase = 0.0f;
+    smoothShift.reset(sampleRate, 0.05);
+    smoothShift.setCurrentAndTargetValue(computeShift(targetHz));
+    for (auto& h : hilbert) h.reset();
 }
 
 void PitchShifter::reset() {
-    for (int ch = 0; ch < 2; ++ch) {
-        auto& g = grains[ch];
-        std::fill(g.buf.begin(), g.buf.end(), 0.0f);
-        g.writeIdx      = 0;
-        g.grainPhase[0] = 0.0f;
-        g.grainPhase[1] = 0.5f;
-        g.readPos[0]    = 0.0f;
-        g.readPos[1]    = wrapBuf(-(float)grainSize * 0.5f, bufSize);
-    }
-    smoothRatio.setCurrentAndTargetValue(computeRatio(targetHz));
-}
-
-float PitchShifter::computeRatio(float hz) const {
-    float ratio = hz / kCenterHz;
-    ratio = juce::jlimit(0.25f, 4.0f, ratio);  // ±2 octaves hard limit
-
-    if (octaveStep) {
-        // Snap to nearest octave: 2^round(log2(ratio))
-        // e.g. ratio 0.7 → round(log2(0.7)=−0.51) → −1 → 0.5×
-        //      ratio 1.3 → round(log2(1.3)=+0.38) →  0 → 1.0×
-        const float octaves = std::round(std::log2(ratio));
-        ratio = std::pow(2.0f, octaves);
-    }
-
-    return ratio;
+    phase = 0.0f;
+    smoothShift.setCurrentAndTargetValue(computeShift(targetHz));
+    for (auto& h : hilbert) h.reset();
 }
 
 void PitchShifter::setFrequency(float hz) {
     targetHz = hz;
-    const float r = computeRatio(hz);
+    const float s = computeShift(hz);
     if (octaveStep)
-        smoothRatio.setCurrentAndTargetValue(r);  // instant snap, no sweep
+        smoothShift.setCurrentAndTargetValue(s);
     else
-        smoothRatio.setTargetValue(r);            // 50 ms smooth glide
+        smoothShift.setTargetValue(s);
 }
 
 void PitchShifter::setOctaveStep(bool on) {
     octaveStep = on;
-    const float r = computeRatio(targetHz);
+    const float s = computeShift(targetHz);
     if (on)
-        smoothRatio.setCurrentAndTargetValue(r);  // snap immediately on mode switch
+        smoothShift.setCurrentAndTargetValue(s);
     else
-        smoothRatio.setTargetValue(r);
+        smoothShift.setTargetValue(s);
 }
 
 // ---------------------------------------------------------------------------
-// process
+// process — single-sideband frequency shift
+//
+// For each sample:
+//   I = input passed through 4-stage all-pass chain A
+//   Q = input passed through 4-stage all-pass chain B  (≈90° phase lag vs I)
+//   y = I·cos(θ) − Q·sin(θ)          (upper sideband: shifts all freqs up by shiftHz)
+//   θ += 2π·shiftHz / sr             (negative shiftHz shifts down naturally)
+//
+// Both channels share the same phasor so the stereo image stays stable.
 // ---------------------------------------------------------------------------
 
 void PitchShifter::process(juce::AudioBuffer<float>& buffer) {
-    const int numChannels = buffer.getNumChannels();
-    const int numSamples  = buffer.getNumSamples();
-
-    // Advance the smoother once per sample so both channels share the same
-    // ratio trajectory (avoid double-stepping the smoother in stereo).
-    jassert(numSamples <= 4096);
-    float ratios[4096];
-    for (int s = 0; s < numSamples; ++s)
-        ratios[s] = smoothRatio.getNextValue();
-
-    for (int ch = 0; ch < juce::jmin(numChannels, 2); ++ch)
-        processChannel(buffer.getWritePointer(ch), numSamples, ratios, ch);
-}
-
-// ---------------------------------------------------------------------------
-// processChannel — granular pitch shift
-//
-// Algorithm: two-grain overlap-add.
-//   • Each grain reader has a normalised phase φ ∈ [0,1).
-//   • Grain 0 starts at φ=0, grain 1 at φ=0.5 (half-grain offset).
-//   • Envelope: Hanning  w(φ) = 0.5·(1 − cos(2π·φ)).
-//   • Two 50%-overlapping Hannings sum to exactly 1 → no amplitude ripple.
-//   • Read pointer advances at `ratio` samples per sample; write at 1/sample.
-//   • When a grain completes one full cycle (φ wraps), the read pointer
-//     resyncs to half-grain behind the current write head, keeping latency
-//     bounded and preventing drift regardless of ratio.
-// ---------------------------------------------------------------------------
-
-void PitchShifter::processChannel(float* data, int numSamples,
-                                   const float* ratios, int ch) {
-    auto& g           = grains[ch];
-    const int   bSz   = bufSize;
-    const float bSzF  = (float)bSz;
-    const float gsF   = (float)grainSize;
-    const float halfGs = gsF * 0.5f;
-    const float phaseInc = 1.0f / gsF;  // grain phase advance per sample
+    const int   numChannels = juce::jmin(buffer.getNumChannels(), 2);
+    const int   numSamples  = buffer.getNumSamples();
+    const float twoPi       = juce::MathConstants<float>::twoPi;
+    const float srF         = static_cast<float>(sr);
 
     for (int s = 0; s < numSamples; ++s) {
-        const float r = ratios[s];
+        const float shiftHz = smoothShift.getNextValue();
+        const float c       = std::cos(phase);
+        const float sn      = std::sin(phase);
 
-        // Write input into circular buffer
-        g.buf[g.writeIdx] = data[s];
+        for (int ch = 0; ch < numChannels; ++ch) {
+            auto&  h    = hilbert[ch];
+            float* data = buffer.getWritePointer(ch);
+            const float x = data[s];
 
-        float out      = 0.0f;
-        float totalEnv = 0.0f;
+            float I = x;
+            I = h.pathA[0].process(I, kCoeffA[0]);
+            I = h.pathA[1].process(I, kCoeffA[1]);
+            I = h.pathA[2].process(I, kCoeffA[2]);
+            I = h.pathA[3].process(I, kCoeffA[3]);
 
-        for (int gi = 0; gi < 2; ++gi) {
-            // Advance grain phase (normalised 0→1)
-            g.grainPhase[gi] += phaseInc;
+            float Q = x;
+            Q = h.pathB[0].process(Q, kCoeffB[0]);
+            Q = h.pathB[1].process(Q, kCoeffB[1]);
+            Q = h.pathB[2].process(Q, kCoeffB[2]);
+            Q = h.pathB[3].process(Q, kCoeffB[3]);
 
-            if (g.grainPhase[gi] >= 1.0f) {
-                // Grain cycle complete — wrap phase and resync read pointer.
-                // Resyncing to half-grain behind write keeps the look-behind
-                // window centred and prevents unbounded drift.
-                g.grainPhase[gi] -= 1.0f;
-                g.readPos[gi] = wrapBuf((float)g.writeIdx - halfGs, bSz);
-            }
-
-            // Hanning envelope — peaks at φ=0.5, zero at φ=0 and φ=1.
-            // Property: H(φ) + H(φ+0.5) = 1  for all φ  (50% OLA identity).
-            const float phi = g.grainPhase[gi];
-            const float env = 0.5f * (1.0f - std::cos(phi * juce::MathConstants<float>::twoPi));
-
-            // Linear interpolation read from circular buffer
-            const float rp   = g.readPos[gi];
-            const int   i0   = (int)rp % bSz;
-            const float frac = rp - std::floor(rp);
-            const int   i1   = (i0 + 1) % bSz;
-            const float smp  = g.buf[i0] * (1.0f - frac) + g.buf[i1] * frac;
-
-            out      += env * smp;
-            totalEnv += env;
-
-            // Advance read pointer at pitch ratio speed
-            g.readPos[gi] = wrapBuf(g.readPos[gi] + r, bSz);
+            data[s] = I * c - Q * sn;
         }
 
-        // Normalise: guards against the brief moment after init when both
-        // envelopes are near zero before the first grain cycle completes.
-        data[s] = (totalEnv > 1e-4f) ? out / totalEnv : 0.0f;
-
-        g.writeIdx = (g.writeIdx + 1) % bSz;
+        phase += twoPi * shiftHz / srF;
+        if (phase >  twoPi) phase -= twoPi;
+        if (phase < -twoPi) phase += twoPi;
     }
 }

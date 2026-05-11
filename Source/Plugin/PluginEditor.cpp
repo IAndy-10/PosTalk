@@ -74,7 +74,7 @@ AudioPluginAudioProcessorEditor::AudioPluginAudioProcessorEditor(AudioPluginAudi
 
     setSize(1260, 700);
     setResizable(true, true);
-    setResizeLimits(450, 280, 1800, 1120);
+    // setResizeLimits(450, 280, 1800, 1120);
 
     auto tempDir = juce::File::getSpecialLocation(juce::File::tempDirectory)
                        .getChildFile("plugin_camera_v1_" +
@@ -150,6 +150,7 @@ void AudioPluginAudioProcessorEditor::timerCallback() {
     sendIfChanged(timbreDrivePre.getParamID());
     sendIfChanged(vibratoRate.getParamID());     sendIfChanged(vibratoDepth.getParamID());
     sendIfChanged(vibratoFadeIn.getParamID());
+    sendIfChanged(pitchFrequency.getParamID()); sendIfChanged(pitchOctaveStep.getParamID());
 }
 
 void AudioPluginAudioProcessorEditor::sendAllParamsToJS() {
@@ -186,6 +187,7 @@ void AudioPluginAudioProcessorEditor::sendAllParamsToJS() {
     sendAll(timbreDrivePre.getParamID());
     sendAll(vibratoRate.getParamID());     sendAll(vibratoDepth.getParamID());
     sendAll(vibratoFadeIn.getParamID());
+    sendAll(pitchFrequency.getParamID()); sendAll(pitchOctaveStep.getParamID());
 }
 
 void AudioPluginAudioProcessorEditor::sendParamToJS(const juce::String& paramId,

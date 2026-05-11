@@ -53,7 +53,7 @@
         freeze: 0, flatEnabled: 0, cutEnabled: 0,
         loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 0, hiCutFreq: 0.75,
         vibratoRate: 0.49, vibratoDepth: 0, vibratoFadeIn: 0.45,
-        pitchFrequency: 0.447, pitchOctaveStep: 0,
+        pitchFrequency: 0.04, pitchOctaveStep: 0,
         sustainEnabled: 0,
       },
       // ── 2 · Chamber ── dark, intimate, warm
@@ -71,7 +71,7 @@
         freeze: 0, flatEnabled: 0, cutEnabled: 0,
         loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 0, hiCutFreq: 0.75,
         vibratoRate: 0.49, vibratoDepth: 0, vibratoFadeIn: 0.45,
-        pitchFrequency: 0.447, pitchOctaveStep: 0,
+        pitchFrequency: 0.04, pitchOctaveStep: 0,
         sustainEnabled: 0,
       },
       // ── 3 · Room ── neutral, balanced, natural
@@ -89,7 +89,7 @@
         freeze: 0, flatEnabled: 0, cutEnabled: 0,
         loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 0, hiCutFreq: 0.75,
         vibratoRate: 0.49, vibratoDepth: 0, vibratoFadeIn: 0.45,
-        pitchFrequency: 0.447, pitchOctaveStep: 0,
+        pitchFrequency: 0.04, pitchOctaveStep: 0,
         sustainEnabled: 0,
       },
       // ── 4 · Studio ── neutral-bright, clean, open
@@ -107,7 +107,7 @@
         freeze: 0, flatEnabled: 0, cutEnabled: 0,
         loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 0, hiCutFreq: 0.75,
         vibratoRate: 0.49, vibratoDepth: 0, vibratoFadeIn: 0.45,
-        pitchFrequency: 0.447, pitchOctaveStep: 0,
+        pitchFrequency: 0.04, pitchOctaveStep: 0,
         sustainEnabled: 0,
       },
       // ── 5 · Hall ── bright, large, spatial
@@ -125,7 +125,7 @@
         freeze: 0, flatEnabled: 0, cutEnabled: 0,
         loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 0, hiCutFreq: 0.75,
         vibratoRate: 0.49, vibratoDepth: 0, vibratoFadeIn: 0.45,
-        pitchFrequency: 0.447, pitchOctaveStep: 0,
+        pitchFrequency: 0.04, pitchOctaveStep: 0,
         sustainEnabled: 0,
       },
       // ── 6 · Infinity ── vast, shimmering, borderless
@@ -143,7 +143,7 @@
         freeze: 0, flatEnabled: 0, cutEnabled: 0,
         loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 0, hiCutFreq: 0.75,
         vibratoRate: 0.42, vibratoDepth: 0.15, vibratoFadeIn: 0.45,
-        pitchFrequency: 1.0, pitchOctaveStep: 1,  // +1 octave snap (880 Hz) for shimmer
+        pitchFrequency: 0.218, pitchOctaveStep: 1,  // +1 octave snap (880 Hz) for shimmer
         sustainEnabled: 0,
       },
     ];
@@ -482,9 +482,9 @@
           <div class="group-label">Pitch Shifter</div>
           <div class="num-row">
             <Number label="Frequency"
-              value={Math.round(110 + 1650 * Math.pow(Math.max(0, $pitchFrequency), 1 / 0.5))}
+              value={Math.round(110 + 1650 * Math.pow(Math.max(0, $pitchFrequency), 0.5))}
               min={110} max={1760} step={1} decimals={0} unit=" Hz"
-              on:change={e => send('pitchFrequency', ns(e.detail.value, 110, 1760, 0.5))} />
+              on:change={e => send('pitchFrequency', ns(e.detail.value, 110, 1760, 2))} />
             <Number label="Oct Step"
               value={Math.round($pitchOctaveStep)}
               min={0} max={1} step={1} decimals={0}

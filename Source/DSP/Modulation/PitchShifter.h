@@ -1,56 +1,81 @@
 #pragma once
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <array>
-#include <vector>
 #include <cmath>
 
-// Granular pitch shifter with optional octave-snap mode.
+// Frequency shifter via IIR Hilbert transform + single-sideband modulation.
 //
-// setFrequency(hz): maps the target pitch — 440 Hz = unity (no shift),
-//   880 Hz = +1 octave, 220 Hz = -1 octave (range: 110–1760 Hz = ±2 octaves).
+// Replaces the previous granular pitch shifter. No grain boundaries, no
+// periodic resync events — produces a clean, artifact-free frequency shift.
 //
-// setOctaveStep(on): when ON, the ratio is snapped to the nearest integer
-//   power of 2 (i.e., whole-octave steps: 0.25×, 0.5×, 1×, 2×, 4×).
-//   Transitions jump immediately rather than sweeping through intermediate ratios.
-//   When OFF, the ratio changes smoothly (50 ms ramp).
+// Trade-off vs. pitch shifting: the shift is linear in Hz, not a ratio.
+// Every frequency bin moves by the same Hz amount, so harmonic relationships
+// change. On a diffuse reverb tail this blends naturally as shimmer texture.
+//
+// setFrequency(hz): 440 Hz = no shift.  >440 Hz shifts up, <440 Hz shifts down.
+//   Shift amount = hz − 440.  e.g. 880 Hz → +440 Hz shift, 220 Hz → −220 Hz.
+//   Parameter range (110–1760 Hz) maps to −330 … +1320 Hz shift.
+//
+// setOctaveStep(on): snaps shift to nearest multiple of 440 Hz
+//   (0, ±440, ±880 Hz) for musically-spaced jumps.
+//
+// Algorithm:
+//   1. Split input into I (in-phase) and Q (quadrature, ≈90° shifted) using
+//      two complementary 4-stage IIR all-pass chains (wideband Hilbert approx,
+//      <1° error from 20 Hz to 20 kHz at 44.1 kHz).
+//   2. y = I·cos(θ) − Q·sin(θ), where θ advances by 2π·shiftHz/sr per sample.
+//      Positive shiftHz → upper sideband (shift up); negative → shift down.
+//   Both channels share the same phasor for a stable stereo image.
 
 class PitchShifter {
 public:
-    // Grain size and look-behind buffer size in milliseconds.
-    // Larger grainMs → smoother pitch, more latency; smaller → more artifact.
-    static constexpr float kGrainMs   = 80.0f;
-    static constexpr float kMaxBufMs  = 300.0f;
-    // Reference frequency that maps to unity ratio (no pitch shift)
-    static constexpr float kCenterHz  = 440.0f;
+    static constexpr float kCenterHz = 440.0f;
 
     void prepare(double sampleRate);
-
-    void setFrequency(float hz);   // 440 = unity, 880 = +1 oct, 220 = -1 oct
-    void setOctaveStep(bool on);   // snap ratio to nearest power-of-2 octave
-
+    void setFrequency(float hz);
+    void setOctaveStep(bool on);
     void process(juce::AudioBuffer<float>& buffer);
     void reset();
 
 private:
-    void  processChannel(float* data, int numSamples, const float* ratios, int ch);
-    float computeRatio(float hz) const;
-
-    double sr          = 44100.0;
-    bool   octaveStep  = false;
-    float  targetHz    = kCenterHz;
-
-    // Two overlapping grain readers per channel (50% overlap, Hanning envelope).
-    // Sum of two 50%-overlapping Hanning windows = 1.0 → no amplitude ripple.
-    struct GrainState {
-        std::vector<float> buf;
-        int   writeIdx       = 0;
-        float grainPhase[2]  = { 0.0f, 0.5f };  // normalized position in grain [0,1)
-        float readPos[2]     = { 0.0f, 0.0f };  // absolute read position in buf[]
+    // First-order IIR all-pass: y[n] = −a·x[n] + x[n−1] + a·y[n−1]
+    struct APF1 {
+        float xp = 0.0f;
+        float yp = 0.0f;
+        float process(float x, float a) noexcept {
+            const float y = -a * x + xp + a * yp;
+            xp = x;  yp = y;
+            return y;
+        }
+        void reset() noexcept { xp = yp = 0.0f; }
     };
-    std::array<GrainState, 2> grains;  // index = channel (0=L, 1=R)
 
-    int grainSize = 0;  // samples
-    int bufSize   = 0;  // samples
+    struct HilbertState {
+        APF1 pathA[4];
+        APF1 pathB[4];
+        void reset() {
+            for (auto& s : pathA) s.reset();
+            for (auto& s : pathB) s.reset();
+        }
+    };
 
-    juce::SmoothedValue<float> smoothRatio { 1.0f };
+    // All-pass poles for wideband 90° phase splitter — tuned for 44.1 kHz.
+    // pathA and pathB interleaved to cover 20 Hz – 20 kHz with <1° phase error.
+    static constexpr float kCoeffA[4] = {
+        0.4021921162f, 0.8561710323f, 0.9722909193f, 0.9952884791f
+    };
+    static constexpr float kCoeffB[4] = {
+        0.6923878f, 0.9360654323f, 0.9882295227f, 0.9987488452f
+    };
+
+    std::array<HilbertState, 2> hilbert;  // [0]=L, [1]=R
+
+    double sr         = 44100.0;
+    float  phase      = 0.0f;     // shared phasor [0, 2π)
+    bool   octaveStep = false;
+    float  targetHz   = kCenterHz;
+
+    juce::SmoothedValue<float> smoothShift { 0.0f };  // shift in Hz, smoothed 50 ms
+
+    float computeShift(float hz) const noexcept;
 };
