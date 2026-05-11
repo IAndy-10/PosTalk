@@ -55,7 +55,7 @@ export const params = {
     vibratoFadeIn: writable(0.447),  // 100 ms in 0–500 ms range, skew 0.5
 
     // Pitch Shifter (shimmer section, Module 6)
-    pitchFrequency:  writable(0.447),  // 440 Hz unity: ((440-110)/1650)^0.5 ≈ 0.447
+    pitchFrequency:  writable(0.04),   // 440 Hz unity: ((440-110)/1650)^2 = 0.04
     pitchOctaveStep: writable(0),      // 0 = continuous, 1 = octave snap
 
     // Performance controls
@@ -166,9 +166,9 @@ export const chorusRateDisplay = derived(params.chorusRate,
 export const sizeDisplay = derived(params.size,
     $v => (0.22 * Math.pow(500.0 / 0.22, $v)).toFixed(2));
 
-// pitchFrequency: 110–1760 Hz, skew=0.5
+// pitchFrequency: 110–1760 Hz, skew=0.5 → display uses pow(norm, 0.5) = sqrt(norm)
 export const pitchFreqDisplay = derived(params.pitchFrequency,
-    $v => Math.round(110 + 1650 * Math.pow($v, 1.0 / 0.5)));
+    $v => Math.round(110 + 1650 * Math.pow($v, 0.5)));
 
 // crossoverFreq: 200–8000 Hz, skew=0.5 (kept for SVG node / UI use)
 export const crossoverHz = derived(params.crossoverFreq,

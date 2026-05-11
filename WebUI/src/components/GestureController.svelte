@@ -8,7 +8,6 @@
     import type { ParameterId } from '../types/parameters';
 
     // ── MediaPipe hand landmark indices ─────────────────────────
-    // https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker
     const LM = {
         WRIST:       0,
         INDEX_PIP:   6,
@@ -22,21 +21,19 @@
     } as const;
 
     // ── Configuration ────────────────────────────────────────────
-    // *** VELOCIDAD DEL CAMBIO WET/DRY ***
-    // Cantidad que cambia dryWet por frame (rAF) mientras se mantiene el gesto.
-    // A ~60 fps: RATE * 60 = cambio por segundo.
-    //   0.006 → ±0.36/s  (rango completo en ~2.8 s)  ← valor original
-    //   0.018 → ±1.08/s  (rango completo en ~0.9 s)  ← valor actual (3× más rápido)
-    // Aumenta este valor para una respuesta más rápida; redúcelo para más suavidad.
-    const RATE = 0.018;
-
-    // Smoothing: require the gesture in ≥ SMOOTH_THRESHOLD of last SMOOTH_N frames.
+    // Single-hand smoothing: gesture must appear in ≥ THRESHOLD of last N frames
     const SMOOTH_N         = 4;
     const SMOOTH_THRESHOLD = 2;
 
-    // Minimum separation (y-axis, normalised) for reliable detection.
-    const Y_WRIST_GAP = 0.10;  // index tip vs wrist
-    const Y_PIP_GAP   = 0.02;  // index tip vs index PIP
+    // Minimum Y separation for reliable single-hand detection
+    const Y_WRIST_GAP = 0.10;
+    const Y_PIP_GAP   = 0.02;
+
+    // Both-hands pitch control:
+    // Multiplier on average wrist Y velocity → normalized pitchFrequency change per frame.
+    // At ~60 fps with a typical hand rise of 0.02 Y/frame: 0.02 * 2.5 = 0.05/frame → full range in ~1s.
+    const PITCH_RATE     = 2.5;
+    const PITCH_DEADZONE = 0.003;  // ignore tiny Y jitter when hands are still
 
     // ── Internal state ───────────────────────────────────────────
     let videoEl: HTMLVideoElement;
@@ -47,20 +44,23 @@
     let histUp   = new Array<boolean>(SMOOTH_N).fill(false);
     let histDown = new Array<boolean>(SMOOTH_N).fill(false);
 
-    // Exported so parent can read current gesture if needed
-    export let gesture: 'up' | 'down' | 'none' = 'none';
+    // Exported so parent can read current gesture
+    export let gesture: 'up' | 'down' | 'pitch' | 'none' = 'none';
+
+    // Edge-detect: only send sustain/freeze on change, not every frame
+    let lastSustain = false;
+    let lastFreeze  = false;
+
+    // Previous average wrist Y — used to compute Y velocity for pitch control
+    let prevAvgY: number | null = null;
 
     // ── Helpers ──────────────────────────────────────────────────
-    function sendDryWet(value: number) {
-        const clamped = Math.max(0, Math.min(1, value));
-        setParameterValue('dryWet' as ParameterId, clamped);
-        bridge.sendParameterChange('dryWet' as ParameterId, clamped);
+    function send(id: ParameterId, value: number) {
+        setParameterValue(id, value);
+        bridge.sendParameterChange(id, value);
     }
 
-    // ── Gesture classification ───────────────────────────────────
-    // No handedness filter — MediaPipe's label for the user's right hand
-    // varies depending on whether the underlying WebView flips the stream.
-    // The geometry checks alone are sufficient to disambiguate.
+    // ── Single-hand gesture classification ───────────────────────
     function classifyGesture(lm: any[]): 'up' | 'down' | 'none' {
         const w  = lm[LM.WRIST];
         const it = lm[LM.INDEX_TIP],  ip = lm[LM.INDEX_PIP];
@@ -68,36 +68,25 @@
         const rt = lm[LM.RING_TIP],   rp = lm[LM.RING_PIP];
         const pt = lm[LM.PINKY_TIP],  pp = lm[LM.PINKY_PIP];
 
-        // How many non-index fingers are curled (tip below its PIP in normal orientation)
+        // Fingers curled in normal (upright) orientation
         const curled =
             (mt.y > mp.y ? 1 : 0) +
             (rt.y > rp.y ? 1 : 0) +
             (pt.y > pp.y ? 1 : 0);
 
-        // How many non-index fingers are "curled" in the inverted orientation
-        // (tip above its PIP, because the whole hand is upside-down)
+        // Fingers curled in inverted (upside-down) orientation
         const invertedCurled =
             (mt.y < mp.y ? 1 : 0) +
             (rt.y < rp.y ? 1 : 0) +
             (pt.y < pp.y ? 1 : 0);
 
-        // ── Pointing UP ─────────────────────────────────────────
-        // Index tip well above wrist, index extended (tip above PIP),
-        // at least 2 of 3 other fingers curled downward.
-        if (
-            it.y < w.y  - Y_WRIST_GAP &&
-            it.y < ip.y - Y_PIP_GAP   &&
-            curled >= 2
-        ) return 'up';
+        // Index pointing up → Sustain
+        if (it.y < w.y - Y_WRIST_GAP && it.y < ip.y - Y_PIP_GAP && curled >= 2)
+            return 'up';
 
-        // ── Pointing DOWN (hand inverted) ────────────────────────
-        // Index tip well below wrist, at least 2 of 3 other fingers
-        // curled upward (inverted fist).
-        if (
-            it.y > w.y  + Y_WRIST_GAP &&
-            it.y > ip.y + Y_PIP_GAP   &&
-            invertedCurled >= 2
-        ) return 'down';
+        // Index pointing down (inverted hand) → Freeze
+        if (it.y > w.y + Y_WRIST_GAP && it.y > ip.y + Y_PIP_GAP && invertedCurled >= 2)
+            return 'down';
 
         return 'none';
     }
@@ -105,10 +94,8 @@
     function smooth(raw: 'up' | 'down' | 'none'): 'up' | 'down' | 'none' {
         histUp.shift();   histUp.push(raw === 'up');
         histDown.shift(); histDown.push(raw === 'down');
-
         const upVotes   = histUp.filter(Boolean).length;
         const downVotes = histDown.filter(Boolean).length;
-
         if (upVotes   >= SMOOTH_THRESHOLD) return 'up';
         if (downVotes >= SMOOTH_THRESHOLD) return 'down';
         return 'none';
@@ -121,22 +108,59 @@
             return;
         }
 
-        const results = handLandmarker.detectForVideo(videoEl, performance.now());
+        const results  = handLandmarker.detectForVideo(videoEl, performance.now());
+        const numHands = results.landmarks.length;
 
-        // Publish landmarks so Camera.svelte can draw the skeleton overlay.
-        latestHands.set(results.landmarks.length > 0 ? results : null);
+        // Publish landmarks so Camera.svelte can draw the skeleton overlay
+        latestHands.set(numHands > 0 ? results : null);
 
-        let raw: 'up' | 'down' | 'none' = 'none';
-        if (results.landmarks.length > 0) {
-            raw = classifyGesture(results.landmarks[0]);
-        }
+        if (numHands >= 2) {
+            // ── Both hands: pitch frequency control ─────────────────
+            // Release any held sustain/freeze before entering pitch mode
+            if (lastSustain) { send('sustainEnabled', 0); lastSustain = false; }
+            if (lastFreeze)  { send('freeze', 0);         lastFreeze  = false; }
 
-        gesture = smooth(raw);
+            // Average wrist Y across both hands (camera Y increases downward)
+            const avgY = (results.landmarks[0][LM.WRIST].y +
+                          results.landmarks[1][LM.WRIST].y) / 2;
 
-        if (gesture !== 'none') {
-            const cur  = get(params.dryWet);
-            const next = cur + (gesture === 'up' ? RATE : -RATE);
-            if (next !== cur) sendDryWet(next);
+            if (prevAvgY !== null) {
+                // prevAvgY - avgY > 0 means hands moved up → increase frequency
+                const delta = prevAvgY - avgY;
+                if (Math.abs(delta) > PITCH_DEADZONE) {
+                    const cur  = get(params.pitchFrequency);
+                    const next = Math.max(0, Math.min(1, cur + delta * PITCH_RATE));
+                    if (Math.abs(next - cur) > 0.0001) send('pitchFrequency', next);
+                }
+            }
+            prevAvgY = avgY;
+            gesture  = 'pitch';
+
+        } else if (numHands === 1) {
+            // ── One hand: sustain (index up) or freeze (index down) ──
+            prevAvgY = null;
+
+            const g = smooth(classifyGesture(results.landmarks[0]));
+            gesture  = g;
+
+            const wantSustain = g === 'up';
+            const wantFreeze  = g === 'down';
+
+            if (wantSustain !== lastSustain) {
+                send('sustainEnabled', wantSustain ? 1 : 0);
+                lastSustain = wantSustain;
+            }
+            if (wantFreeze !== lastFreeze) {
+                send('freeze', wantFreeze ? 1 : 0);
+                lastFreeze = wantFreeze;
+            }
+
+        } else {
+            // ── No hands: release everything ─────────────────────────
+            prevAvgY = null;
+            if (lastSustain) { send('sustainEnabled', 0); lastSustain = false; }
+            if (lastFreeze)  { send('freeze', 0);         lastFreeze  = false; }
+            gesture = 'none';
         }
 
         rafId = requestAnimationFrame(loop);
@@ -147,8 +171,6 @@
         if (status !== 'idle') return;
         status = 'loading';
         try {
-            // Dynamic import keeps MediaPipe out of the critical-path bundle.
-            // The WASM is fetched from jsDelivr at runtime (not inlined).
             const { HandLandmarker, FilesetResolver } = await import(
                 '@mediapipe/tasks-vision'
             );
@@ -162,21 +184,18 @@
                     modelAssetPath:
                         'https://storage.googleapis.com/mediapipe-models/' +
                         'hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-                    // CPU is more reliable inside WebKit-based WebViews (JUCE).
-                    // Can be switched to 'GPU' if performance is a concern.
                     delegate: 'CPU',
                 },
                 runningMode: 'VIDEO',
-                numHands: 1,
+                numHands: 2,
             });
 
-            // Attach the shared stream to our hidden video element.
             videoEl.srcObject = stream;
             await new Promise<void>(res => { videoEl.onloadeddata = () => res(); });
             await videoEl.play();
 
             status = 'ready';
-            rafId = requestAnimationFrame(loop);
+            rafId  = requestAnimationFrame(loop);
         } catch (err) {
             console.warn('[GestureController] MediaPipe init failed:', err);
             status = 'error';
@@ -185,47 +204,41 @@
 
     // ── Lifecycle ────────────────────────────────────────────────
     onMount(() => {
-        // Subscribe returns its unsubscribe fn; returning it from onMount
-        // means Svelte calls it automatically on component destroy.
         return cameraStream.subscribe(stream => {
-            if (stream && status === 'idle') {
-                initMediaPipe(stream);
-            }
+            if (stream && status === 'idle') initMediaPipe(stream);
         });
     });
 
     onDestroy(() => {
         if (rafId !== null) cancelAnimationFrame(rafId);
         latestHands.set(null);
-        // HandLandmarker.close() releases the WASM resources.
         try { handLandmarker?.close(); } catch (_) {}
     });
 </script>
 
-<!--
-    Hidden video element that MediaPipe reads from.
-    The visible camera feed in Camera.svelte is separate (same stream, two <video>s).
-    Future: add a <canvas> overlay here to draw the hand skeleton.
--->
+<!-- Hidden video element that MediaPipe reads from -->
 <video bind:this={videoEl} style="display:none" muted playsinline></video>
 
-<!-- Compact gesture status indicator shown in the Output panel -->
 <div class="gesture-wrap">
     <div class="gesture-icon" class:active={gesture !== 'none'}>
         {#if status === 'loading'}
             <span class="dot loading" title="Loading gesture model…"></span>
         {:else if status === 'error'}
-            <span class="dot error"   title="Gesture model unavailable"></span>
+            <span class="dot error" title="Gesture model unavailable"></span>
         {:else if gesture === 'up'}
-            <span class="arrow" title="More wet">↑</span>
+            <span class="arrow" title="Sustain">↑</span>
         {:else if gesture === 'down'}
-            <span class="arrow" title="More dry">↓</span>
+            <span class="arrow" title="Freeze">↓</span>
+        {:else if gesture === 'pitch'}
+            <span class="arrow pitch" title="Pitch control">⇕</span>
         {:else}
             <span class="dot ready" class:on={status === 'ready'} title="Gesture control ready"></span>
         {/if}
     </div>
     <span class="gesture-label">
-        {gesture === 'up' ? 'wet ↑' : gesture === 'down' ? 'dry ↑' : 'gesture'}
+        {gesture === 'up'    ? 'sustain' :
+         gesture === 'down'  ? 'freeze'  :
+         gesture === 'pitch' ? 'pitch'   : 'gesture'}
     </span>
 </div>
 
@@ -277,8 +290,12 @@
         text-shadow: 0 0 8px rgba(0, 200, 180, 0.45);
     }
 
+    .arrow.pitch {
+        color: rgba(180, 120, 255, 0.85);
+        text-shadow: 0 0 8px rgba(180, 120, 255, 0.45);
+    }
+
     .gesture-label {
-        font-family: 'DM Sans', sans-serif;
         font-size: 0.48rem;
         font-weight: 300;
         letter-spacing: 0.15em;
