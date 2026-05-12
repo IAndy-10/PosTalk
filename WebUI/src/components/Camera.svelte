@@ -10,6 +10,43 @@
     let error  = '';
     let active = false;
 
+    // Cover-crop compensation: computed once when the video stream dimensions are known
+    // and again whenever the container is resized.
+    // MediaPipe landmarks are normalised to the stream's native resolution.
+    // object-fit:cover crops the video, so we must offset the canvas draw positions
+    // by the same amount so the skeleton stays pixel-aligned with the displayed image.
+    let coverScale = 1;
+    let coverOX    = 0;   // horizontal offset in canvas pixels (negative = cropped)
+    let coverOY    = 0;   // vertical offset in canvas pixels
+
+    function updateCoverTransform() {
+        if (!canvasEl || !videoEl?.videoWidth) return;
+        const rect = canvasEl.getBoundingClientRect();
+        const dW   = rect.width;
+        const dH   = rect.height;
+        if (dW === 0 || dH === 0) return;
+
+        // Match canvas internal resolution 1:1 with the displayed pixels.
+        canvasEl.width  = dW;
+        canvasEl.height = dH;
+
+        // Replicate the cover scale used by the <video> element.
+        const vW = videoEl.videoWidth;
+        const vH = videoEl.videoHeight;
+        coverScale = Math.max(dW / vW, dH / vH);
+        coverOX    = (dW - vW * coverScale) / 2;
+        coverOY    = (dH - vH * coverScale) / 2;
+    }
+
+    // Convert a normalised landmark coordinate to canvas pixel space,
+    // accounting for the cover crop so it aligns with the visible video.
+    function lmToPixel(lm: NormalizedLandmark): { x: number; y: number } {
+        return {
+            x: lm.x * videoEl.videoWidth  * coverScale + coverOX,
+            y: lm.y * videoEl.videoHeight * coverScale + coverOY,
+        };
+    }
+
     // ── Hand skeleton connections (MediaPipe 21-landmark topology) ──
     const CONNECTIONS: [number, number][] = [
         [0,1],[1,2],[2,3],[3,4],          // thumb
@@ -27,9 +64,6 @@
         if (!canvasEl) return;
         const ctx = canvasEl.getContext('2d');
         if (!ctx) return;
-        const { width: w, height: h } = canvasEl;
-
-        ctx.clearRect(0, 0, w, h);
 
         // ── Connections ─────────────────────────────────────────
         ctx.lineWidth   = 1.5;
@@ -37,20 +71,21 @@
         ctx.strokeStyle = 'rgba(0, 200, 180, 0.65)';
 
         for (const [a, b] of CONNECTIONS) {
+            const pa = lmToPixel(lm[a]);
+            const pb = lmToPixel(lm[b]);
             ctx.beginPath();
-            ctx.moveTo(lm[a].x * w, lm[a].y * h);
-            ctx.lineTo(lm[b].x * w, lm[b].y * h);
+            ctx.moveTo(pa.x, pa.y);
+            ctx.lineTo(pb.x, pb.y);
             ctx.stroke();
         }
 
         // ── Landmark dots ────────────────────────────────────────
         for (let i = 0; i < lm.length; i++) {
-            const px = lm[i].x * w;
-            const py = lm[i].y * h;
-            const r  = TIPS.has(i) ? 3 : 2;
+            const { x, y } = lmToPixel(lm[i]);
+            const r = TIPS.has(i) ? 3 : 2;
 
             ctx.beginPath();
-            ctx.arc(px, py, r, 0, Math.PI * 2);
+            ctx.arc(x, y, r, 0, Math.PI * 2);
             ctx.fillStyle = TIPS.has(i)
                 ? 'rgba(0, 200, 180, 0.95)'
                 : 'rgba(255, 250, 240, 0.85)';
@@ -73,6 +108,8 @@
         try {
             stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
             videoEl.srcObject = stream;
+            // Recompute cover transform once the stream dimensions are known.
+            videoEl.addEventListener('loadedmetadata', updateCoverTransform, { once: true });
             active = true;
             error  = '';
             cameraStream.set(stream);
@@ -94,16 +131,25 @@
     onMount(() => {
         startCamera();
 
+        // Recompute whenever the container is resized (e.g. window resize).
+        const resizeObs = new ResizeObserver(updateCoverTransform);
+        resizeObs.observe(canvasEl);
+
         // Subscribe to hand landmarks and redraw whenever they change.
         const unsubHands = latestHands.subscribe(data => {
             if (data && data.landmarks.length > 0) {
-                drawSkeleton(data.landmarks[0]);
+                const ctx = canvasEl?.getContext('2d');
+                if (ctx) ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+                for (const hand of data.landmarks) drawSkeleton(hand);
             } else {
                 clearCanvas();
             }
         });
 
-        return unsubHands;
+        return () => {
+            resizeObs.disconnect();
+            unsubHands();
+        };
     });
 
     onDestroy(() => { stopCamera(); });
@@ -120,17 +166,8 @@
         muted
     ></video>
 
-    <!--
-        Skeleton overlay — same mirror transform as the video so landmarks
-        align perfectly with the reflected image the user sees.
-        Internal resolution 320×240 is enough for crisp lines at display size.
-    -->
-    <canvas
-        bind:this={canvasEl}
-        class="cam-overlay"
-        width="320"
-        height="240"
-    ></canvas>
+    <!-- Skeleton overlay — dimensions set dynamically to match the rendered container. -->
+    <canvas bind:this={canvasEl} class="cam-overlay"></canvas>
 
     {#if !active}
         <div class="cam-placeholder">
@@ -146,8 +183,7 @@
 <style>
     .camera-wrap {
         width: 100%;
-        aspect-ratio: 4 / 3;
-        max-height: 120px;
+        height: 100%;
         border-radius: 10px;
         overflow: hidden;
         background: #1a1614;
@@ -155,7 +191,6 @@
             inset 4px 4px 10px rgba(100,80,55,0.35),
             inset -3px -3px 8px rgba(255,250,240,0.06);
         position: relative;
-        flex-shrink: 0;
     }
 
     .cam-video {

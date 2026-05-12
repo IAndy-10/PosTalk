@@ -38,3 +38,6 @@ WebUI/dist/
 # Logs
 *.log
 npm-debug.log*
+
+# Local notes
+docs/DSP_Learnings.md

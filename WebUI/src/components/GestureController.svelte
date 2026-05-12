@@ -10,6 +10,7 @@
     // ── MediaPipe hand landmark indices ─────────────────────────
     const LM = {
         WRIST:       0,
+        INDEX_MCP:   5,
         INDEX_PIP:   6,
         INDEX_TIP:   8,
         MIDDLE_PIP: 10,
@@ -21,19 +22,15 @@
     } as const;
 
     // ── Configuration ────────────────────────────────────────────
-    // Single-hand smoothing: gesture must appear in ≥ THRESHOLD of last N frames
     const SMOOTH_N         = 4;
     const SMOOTH_THRESHOLD = 2;
 
-    // Minimum Y separation for reliable single-hand detection
-    const Y_WRIST_GAP = 0.10;
-    const Y_PIP_GAP   = 0.02;
+    const Y_WRIST_GAP = 0.10;  // index tip must be this far above wrist (normalised)
+    const Y_PIP_GAP   = 0.02;  // index tip must be this far above its PIP
 
-    // Both-hands pitch control:
-    // Multiplier on average wrist Y velocity → normalized pitchFrequency change per frame.
-    // At ~60 fps with a typical hand rise of 0.02 Y/frame: 0.02 * 2.5 = 0.05/frame → full range in ~1s.
-    const PITCH_RATE     = 2.5;
-    const PITCH_DEADZONE = 0.003;  // ignore tiny Y jitter when hands are still
+    // Pitch control: normalized units added/subtracted per frame (~60 fps).
+    // 0.004/frame × 60 fps = 0.24 normalized/s → crosses full range in ~4 s.
+    const PITCH_STEP = 0.004;
 
     // ── Internal state ───────────────────────────────────────────
     let videoEl: HTMLVideoElement;
@@ -44,15 +41,10 @@
     let histUp   = new Array<boolean>(SMOOTH_N).fill(false);
     let histDown = new Array<boolean>(SMOOTH_N).fill(false);
 
-    // Exported so parent can read current gesture
     export let gesture: 'up' | 'down' | 'pitch' | 'none' = 'none';
 
-    // Edge-detect: only send sustain/freeze on change, not every frame
-    let lastSustain = false;
-    let lastFreeze  = false;
-
-    // Previous average wrist Y — used to compute Y velocity for pitch control
-    let prevAvgY: number | null = null;
+    // Single flag covers sustain+freeze together (they always move in unison)
+    let lastGateOn = false;
 
     // ── Helpers ──────────────────────────────────────────────────
     function send(id: ParameterId, value: number) {
@@ -60,35 +52,48 @@
         bridge.sendParameterChange(id, value);
     }
 
-    // ── Single-hand gesture classification ───────────────────────
-    function classifyGesture(lm: any[]): 'up' | 'down' | 'none' {
+    function sendGates(on: boolean) {
+        send('sustainEnabled', on ? 1 : 0);
+        send('freeze',         on ? 1 : 0);
+    }
+
+    // ── Gesture classifiers ───────────────────────────────────────
+
+    // Index finger pointing up, other fingers curled — one-handed
+    function classifyIndexUp(lm: any[]): 'up' | 'down' | 'none' {
         const w  = lm[LM.WRIST];
-        const it = lm[LM.INDEX_TIP],  ip = lm[LM.INDEX_PIP];
+        const it = lm[LM.INDEX_TIP], ip = lm[LM.INDEX_PIP];
         const mt = lm[LM.MIDDLE_TIP], mp = lm[LM.MIDDLE_PIP];
         const rt = lm[LM.RING_TIP],   rp = lm[LM.RING_PIP];
         const pt = lm[LM.PINKY_TIP],  pp = lm[LM.PINKY_PIP];
 
-        // Fingers curled in normal (upright) orientation
         const curled =
             (mt.y > mp.y ? 1 : 0) +
             (rt.y > rp.y ? 1 : 0) +
             (pt.y > pp.y ? 1 : 0);
 
-        // Fingers curled in inverted (upside-down) orientation
         const invertedCurled =
             (mt.y < mp.y ? 1 : 0) +
             (rt.y < rp.y ? 1 : 0) +
             (pt.y < pp.y ? 1 : 0);
 
-        // Index pointing up → Sustain
         if (it.y < w.y - Y_WRIST_GAP && it.y < ip.y - Y_PIP_GAP && curled >= 2)
             return 'up';
 
-        // Index pointing down (inverted hand) → Freeze
         if (it.y > w.y + Y_WRIST_GAP && it.y > ip.y + Y_PIP_GAP && invertedCurled >= 2)
             return 'down';
 
         return 'none';
+    }
+
+    // Gross hand orientation — fingertips above/below wrist, no curling requirement.
+    // Used for two-hand pitch control where any natural raised/lowered hand counts.
+    function handPointsUp(lm: any[]): boolean {
+        return lm[LM.INDEX_TIP].y < lm[LM.WRIST].y - Y_WRIST_GAP;
+    }
+
+    function handPointsDown(lm: any[]): boolean {
+        return lm[LM.INDEX_TIP].y > lm[LM.WRIST].y + Y_WRIST_GAP;
     }
 
     function smooth(raw: 'up' | 'down' | 'none'): 'up' | 'down' | 'none' {
@@ -111,55 +116,48 @@
         const results  = handLandmarker.detectForVideo(videoEl, performance.now());
         const numHands = results.landmarks.length;
 
-        // Publish landmarks so Camera.svelte can draw the skeleton overlay
         latestHands.set(numHands > 0 ? results : null);
 
+        // ── Priority 1: both hands → pitch mode ────────────────────
+        // Both index-up  → pitch up (increment per frame)
+        // Both index-down → pitch down (decrement per frame)
         if (numHands >= 2) {
-            // ── Both hands: pitch frequency control ─────────────────
-            // Release any held sustain/freeze before entering pitch mode
-            if (lastSustain) { send('sustainEnabled', 0); lastSustain = false; }
-            if (lastFreeze)  { send('freeze', 0);         lastFreeze  = false; }
+            const lm0 = results.landmarks[0];
+            const lm1 = results.landmarks[1];
+            const bothUp   = handPointsUp(lm0)   && handPointsUp(lm1);
+            const bothDown = handPointsDown(lm0) && handPointsDown(lm1);
 
-            // Average wrist Y across both hands (camera Y increases downward)
-            const avgY = (results.landmarks[0][LM.WRIST].y +
-                          results.landmarks[1][LM.WRIST].y) / 2;
-
-            if (prevAvgY !== null) {
-                // prevAvgY - avgY > 0 means hands moved up → increase frequency
-                const delta = prevAvgY - avgY;
-                if (Math.abs(delta) > PITCH_DEADZONE) {
-                    const cur  = get(params.pitchFrequency);
-                    const next = Math.max(0, Math.min(1, cur + delta * PITCH_RATE));
-                    if (Math.abs(next - cur) > 0.0001) send('pitchFrequency', next);
-                }
+            if (bothUp) {
+                const cur  = get(params.pitchFrequency);
+                const next = Math.min(1, cur + PITCH_STEP);
+                if (next !== cur) send('pitchFrequency', next);
+                gesture = 'pitch';
+            } else if (bothDown) {
+                const cur  = get(params.pitchFrequency);
+                const next = Math.max(0, cur - PITCH_STEP);
+                if (next !== cur) send('pitchFrequency', next);
+                gesture = 'pitch';
+            } else {
+                gesture = 'none';
             }
-            prevAvgY = avgY;
-            gesture  = 'pitch';
 
+        // ── Priority 2: single hand → gates (latching) ─────────────
+        // Gates stay on/off until the opposite gesture is detected.
+        // Losing the hand or returning to 'none' does NOT change gate state.
         } else if (numHands === 1) {
-            // ── One hand: sustain (index up) or freeze (index down) ──
-            prevAvgY = null;
-
-            const g = smooth(classifyGesture(results.landmarks[0]));
+            const g = smooth(classifyIndexUp(results.landmarks[0]));
             gesture  = g;
 
-            const wantSustain = g === 'up';
-            const wantFreeze  = g === 'down';
-
-            if (wantSustain !== lastSustain) {
-                send('sustainEnabled', wantSustain ? 1 : 0);
-                lastSustain = wantSustain;
-            }
-            if (wantFreeze !== lastFreeze) {
-                send('freeze', wantFreeze ? 1 : 0);
-                lastFreeze = wantFreeze;
+            if (g === 'up' && !lastGateOn) {
+                sendGates(true);
+                lastGateOn = true;
+            } else if (g === 'down' && lastGateOn) {
+                sendGates(false);
+                lastGateOn = false;
             }
 
+        // ── Priority 3: no hands → idle, gates persist ─────────────
         } else {
-            // ── No hands: release everything ─────────────────────────
-            prevAvgY = null;
-            if (lastSustain) { send('sustainEnabled', 0); lastSustain = false; }
-            if (lastFreeze)  { send('freeze', 0);         lastFreeze  = false; }
             gesture = 'none';
         }
 
@@ -216,7 +214,6 @@
     });
 </script>
 
-<!-- Hidden video element that MediaPipe reads from -->
 <video bind:this={videoEl} style="display:none" muted playsinline></video>
 
 <div class="gesture-wrap">
@@ -226,19 +223,19 @@
         {:else if status === 'error'}
             <span class="dot error" title="Gesture model unavailable"></span>
         {:else if gesture === 'up'}
-            <span class="arrow" title="Sustain">↑</span>
+            <span class="arrow" title="Gates on">↑</span>
         {:else if gesture === 'down'}
-            <span class="arrow" title="Freeze">↓</span>
+            <span class="arrow" title="Gates off">↓</span>
         {:else if gesture === 'pitch'}
-            <span class="arrow pitch" title="Pitch control">⇕</span>
+            <span class="arrow pitch" title="Pitch control">↕</span>
         {:else}
             <span class="dot ready" class:on={status === 'ready'} title="Gesture control ready"></span>
         {/if}
     </div>
     <span class="gesture-label">
-        {gesture === 'up'    ? 'sustain' :
-         gesture === 'down'  ? 'freeze'  :
-         gesture === 'pitch' ? 'pitch'   : 'gesture'}
+        {gesture === 'up'    ? 'gates on'  :
+         gesture === 'down'  ? 'gates off' :
+         gesture === 'pitch' ? 'pitch'     : 'gesture'}
     </span>
 </div>
 

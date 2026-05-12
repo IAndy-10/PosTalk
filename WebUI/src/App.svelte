@@ -5,8 +5,9 @@
 
     import Number   from './components/Number.svelte';
     import Toggle   from './components/Toggle.svelte';
-    import Camera   from './components/Camera.svelte';
-    import Tooltip  from './components/Tooltip.svelte';
+    import Camera            from './components/Camera.svelte';
+    import GestureController from './components/GestureController.svelte';
+    import Tooltip           from './components/Tooltip.svelte';
 
     const {
         gainDb, outputTrimDb,
@@ -219,6 +220,7 @@
         <!-- Camera -->
         <div class="camera-card">
           <Camera />
+          <GestureController />
         </div>
 
         <!-- Gestures + quick access numbers -->
