@@ -13,49 +13,68 @@
   const dispatch = createEventDispatcher();
 
   let editing  = false;
-  let inputEl;
+  let inputEl: HTMLInputElement | undefined;
   let rawInput = '';
 
   $: displayVal = (unit === ' ms' && value >= 1000)
     ? value.toFixed(0)
     : value.toFixed(decimals);
 
-  function clamp(v) { return Math.min(max, Math.max(min, v)); }
-  function emit()   { dispatch('change', { value }); }
+  function clamp(v: number) { return Math.min(max, Math.max(min, v)); }
+  function emit() { dispatch('change', { value }); }
 
   function startEdit() {
-    editing = true; rawInput = displayVal;
+    if (editing) return;  // already in edit mode — ignore re-clicks
+    rawInput = displayVal;
+    editing  = true;
+    // Use setTimeout so the <input> renders before we focus it.
+    // We do NOT set rawInput to the key that was pressed here, so no character
+    // can "fall through" from the triggering event into the input.
     setTimeout(() => { if (inputEl) { inputEl.focus(); inputEl.select(); } }, 0);
   }
+
   function commitEdit() {
     const p = parseFloat(rawInput);
     if (!isNaN(p)) { value = clamp(p); emit(); }
     editing = false;
   }
+
   function cancelEdit() { editing = false; }
 
-  function onInputKey(e) {
-    if (e.key === 'Enter')      { e.preventDefault(); commitEdit(); }
-    else if (e.key === 'Escape'){ e.preventDefault(); cancelEdit(); }
-    else if (e.key === 'ArrowUp')   { e.preventDefault(); rawInput = clamp(parseFloat(rawInput || String(value)) + step).toFixed(decimals); }
-    else if (e.key === 'ArrowDown') { e.preventDefault(); rawInput = clamp(parseFloat(rawInput || String(value)) - step).toFixed(decimals); }
-  }
-  function onDisplayKey(e) {
-    if (e.key === 'ArrowUp')   { e.preventDefault(); value = clamp(value + step); emit(); }
-    else if (e.key === 'ArrowDown') { e.preventDefault(); value = clamp(value - step); emit(); }
-    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startEdit(); }
-    else if ((e.key >= '0' && e.key <= '9') || e.key === '-' || e.key === '.') {
-      rawInput = e.key; editing = true;
-      setTimeout(() => { if (inputEl) inputEl.focus(); }, 0);
+  function onInputKey(e: KeyboardEvent) {
+    if (e.key === 'Enter')       { e.preventDefault(); commitEdit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+    else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      rawInput = clamp(parseFloat(rawInput || String(value)) + step).toFixed(decimals);
+    }
+    else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      rawInput = clamp(parseFloat(rawInput || String(value)) - step).toFixed(decimals);
     }
   }
-  function onWheel(e) {
-    e.preventDefault();
-    value = clamp(value + (e.deltaY < 0 ? 1 : -1) * step); emit();
+
+  function onDisplayKey(e: KeyboardEvent) {
+    if (e.key === 'ArrowUp') {
+      e.preventDefault(); value = clamp(value + step); emit();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault(); value = clamp(value - step); emit();
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault(); startEdit();
+    }
+    // Digit keys are intentionally NOT handled here.
+    // A single click already opens the input with the current value selected,
+    // so the user can just type to overwrite — no shortcut needed.
   }
 
-  let ttTimer;
-  function onMouseEnter(e) {
+  function onWheel(e: WheelEvent) {
+    // preventDefault is called via the |preventDefault modifier on the element.
+    value = clamp(value + (e.deltaY < 0 ? 1 : -1) * step);
+    emit();
+  }
+
+  let ttTimer: ReturnType<typeof setTimeout>;
+  function onMouseEnter(e: MouseEvent) {
     ttTimer = setTimeout(() => tooltipStore.set({
       visible: true, x: e.clientX + 12, y: e.clientY - 48,
       name: label, value: `${displayVal}${unit}`, range: `${min} – ${max}${unit}`,
@@ -65,12 +84,12 @@
     clearTimeout(ttTimer);
     tooltipStore.update(s => ({ ...s, visible: false }));
   }
-  function onMouseMove(e) {
+  function onMouseMove(e: MouseEvent) {
     tooltipStore.update(s => s.visible ? { ...s, x: e.clientX + 12, y: e.clientY - 48 } : s);
   }
 
   let ctxVisible = false, ctxX = 0, ctxY = 0;
-  function onContextMenu(e) {
+  function onContextMenu(e: MouseEvent) {
     e.preventDefault(); ctxX = e.clientX; ctxY = e.clientY; ctxVisible = true;
     setTimeout(() => window.addEventListener('mousedown', closeCtx, { once: true }), 0);
   }
@@ -97,7 +116,9 @@
     role="spinbutton"
     aria-label="{label} {displayVal}{unit}"
     aria-valuenow={value} aria-valuemin={min} aria-valuemax={max}
-    on:dblclick={startEdit} on:keydown={onDisplayKey} on:wheel|passive={onWheel}
+    on:click={startEdit}
+    on:keydown={onDisplayKey}
+    on:wheel|preventDefault={onWheel}
   >
     {#if editing}
       <input bind:this={inputEl} bind:value={rawInput}
