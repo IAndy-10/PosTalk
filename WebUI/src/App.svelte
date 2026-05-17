@@ -147,6 +147,24 @@
         pitchFrequency: 0.218, pitchOctaveStep: 1,  // +1 octave snap (880 Hz) for shimmer
         sustainEnabled: 0,
       },
+      // ── 7 · IPA 
+      {
+        decay: 0.77,  damping: 0.08, crossoverFreq: 0.97, size: 0.90,
+        diffusion: 0.85, feedback: 0.90, dryWet: 0.98, reverbMode: 0,
+        scale: 0.90,  density: 1,   smooth: 0, highFilterType: 0,
+        satDrive: 0,  satMix: 0,    satTone: 1.0,
+        timbreCutoff: 0.94, timbreResonance: 0.15, timbreDrivePre: 0,
+        predelay: 0.316, stereo: 0.92,
+        erEnabled: 1,  erAmount: 0.98, erShape: 0.75, erRate: 0.59,
+        chorusEnabled: 1, chorusAmount: 0.25, chorusRate: 0.31,
+        reflectGain: 0.83, diffuseGain: 0.94,
+        gainDb: 0.667, outputTrimDb: 1,
+        freeze: 0, flatEnabled: 0, cutEnabled: 0,
+        loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 0, hiCutFreq: 0.75,
+        vibratoRate: 1.42, vibratoDepth: 0.15, vibratoFadeIn: 0.45,
+        pitchFrequency: 0.0, pitchOctaveStep: 0, 
+        sustainEnabled: 0,
+      },
     ];
 
     function applyPreset(idx: number) {
