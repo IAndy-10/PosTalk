@@ -180,7 +180,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     // Logarithmic skew (0.5) gives fine resolution near unity.
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         pitchFrequency, "Pitch Frequency",
-        juce::NormalisableRange<float>(110.0f, 1760.0f, 0.1f, 0.5f), 440.0f));
+        juce::NormalisableRange<float>(110.0f, 1760.0f, 0.1f, 2.0f), 440.0f));
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         pitchOctaveStep, "Pitch Octave Step", false));
 
