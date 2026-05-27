@@ -37,7 +37,7 @@
     //   erAmount    2–55          skew 0.5
     //   chorusRate  0.01–8 Hz     skew 0.5
     //   others: linear or raw 0-1
-    const PRESET_NAMES = ['Abyss', 'Chamber', 'Room', 'Studio', 'Hall', 'Infinity'];
+    const PRESET_NAMES = ['Abyss', 'Chamber', 'Room', 'Studio', 'Hall', 'Infinity', 'IPA'];
     const PRESETS: Record<string, number>[] = [
       // ── 1 · Abyss ── ultra-dark, compressed, cave-like
       {
@@ -160,9 +160,9 @@
         reflectGain: 0.83, diffuseGain: 0.94,
         gainDb: 0.667, outputTrimDb: 1,
         freeze: 0, flatEnabled: 0, cutEnabled: 0,
-        loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 0, hiCutFreq: 0.75,
+        loCutEnabled: 0, loCutFreq: 0.20, hiCutEnabled: 1, hiCutFreq: 0.35,
         vibratoRate: 1.42, vibratoDepth: 0.15, vibratoFadeIn: 0.45,
-        pitchFrequency: 0.0, pitchOctaveStep: 0, 
+        pitchFrequency: 0.04, pitchOctaveStep: 0, 
         sustainEnabled: 0,
       },
     ];
@@ -271,10 +271,9 @@
 
           <div class="group-label">Performance</div>
           <div class="num-row perf-row">
-            <Number label="Sustain"
-              value={Math.round($sustainEnabled)}
-              min={0} max={1} step={1} decimals={0}
-              on:change={e => send('sustainEnabled', e.detail.value)} />
+            <Toggle label="SUSTAIN" led glow
+              active={$sustainEnabled > 0.5}
+              on:change={e => send('sustainEnabled', e.detail.active ? 1 : 0)} />
             <button class="cut-btn" on:click={handleCutNow}>CUT</button>
           </div>
 
@@ -316,114 +315,6 @@
               value={+ds($predelay, 0, 500, 0.5).toFixed(1)}
               min={0} max={500} step={1} decimals={1} unit=" ms"
               on:change={e => send('predelay', ns(e.detail.value, 0, 500, 0.5))} />
-            <Number label="Reflect"
-              value={+dl($reflectGain, -30, 6).toFixed(1)}
-              min={-30} max={6} step={0.1} decimals={1} unit=" dB"
-              on:change={e => send('reflectGain', nl(e.detail.value, -30, 6))} />
-            <Number label="Diffuse"
-              value={+dl($diffuseGain, -30, 6).toFixed(1)}
-              min={-30} max={6} step={0.1} decimals={1} unit=" dB"
-              on:change={e => send('diffuseGain', nl(e.detail.value, -30, 6))} />
-          </div>
-
-          <div class="group-label">FDN</div>
-          <div class="num-row">
-            <Number label="Crossover"
-              value={+ds($crossoverFreq, 200, 8000, 0.5).toFixed(0)}
-              min={200} max={8000} step={10} decimals={0} unit=" Hz"
-              on:change={e => send('crossoverFreq', ns(e.detail.value, 200, 8000, 0.5))} />
-            <Number label="Scale"
-              value={+$scale.toFixed(2)}
-              min={0} max={1} step={0.01} decimals={2}
-              on:change={e => send('scale', e.detail.value)} />
-            <Number label="Mode"
-              value={Math.round($reverbMode)}
-              min={0} max={1} step={1} decimals={0}
-              on:change={e => send('reverbMode', e.detail.value)} />
-            <Number label="Density"
-              value={Math.round($density * 3)}
-              min={0} max={3} step={1} decimals={0}
-              on:change={e => send('density', e.detail.value / 3)} />
-            <Number label="Smooth"
-              value={Math.round($smooth * 3)}
-              min={0} max={3} step={1} decimals={0}
-              on:change={e => send('smooth', e.detail.value / 3)} />
-            <Number label="HF Filter"
-              value={Math.round($highFilterType)}
-              min={0} max={1} step={1} decimals={0}
-              on:change={e => send('highFilterType', e.detail.value)} />
-          </div>
-
-          <div class="group-label">Gates</div>
-          <div class="num-row">
-            <Number label="Freeze"
-              value={Math.round($freeze)}
-              min={0} max={1} step={1} decimals={0}
-              on:change={e => send('freeze', e.detail.value)} />
-            <Number label="Flat"
-              value={Math.round($flatEnabled)}
-              min={0} max={1} step={1} decimals={0}
-              on:change={e => send('flatEnabled', e.detail.value)} />
-            <Number label="Cut"
-              value={Math.round($cutEnabled)}
-              min={0} max={1} step={1} decimals={0}
-              on:change={e => send('cutEnabled', e.detail.value)} />
-          </div>
-
-          <div class="group-label">Early Reflections</div>
-          <div class="num-row">
-            <Number label="ER On"
-              value={Math.round($erEnabled)}
-              min={0} max={1} step={1} decimals={0}
-              on:change={e => send('erEnabled', e.detail.value)} />
-            <Number label="Amount"
-              value={+ds($erAmount, 2, 55, 0.5).toFixed(1)}
-              min={2} max={55} step={0.5} decimals={1}
-              on:change={e => send('erAmount', ns(e.detail.value, 2, 55, 0.5))} />
-            <Number label="Rate"
-              value={+ds($erRate, 0.07, 1.3, 0.5).toFixed(2)}
-              min={0.07} max={1.3} step={0.01} decimals={2} unit=" Hz"
-              on:change={e => send('erRate', ns(e.detail.value, 0.07, 1.3, 0.5))} />
-            <Number label="Shape"
-              value={+$erShape.toFixed(2)}
-              min={0} max={1} step={0.01} decimals={2}
-              on:change={e => send('erShape', e.detail.value)} />
-          </div>
-
-          <div class="group-label">Chorus</div>
-          <div class="num-row">
-            <Number label="Chorus"
-              value={Math.round($chorusEnabled)}
-              min={0} max={1} step={1} decimals={0}
-              on:change={e => send('chorusEnabled', e.detail.value)} />
-            <Number label="Amount"
-              value={+dl($chorusAmount, 0.01, 4.0).toFixed(2)}
-              min={0.01} max={4} step={0.01} decimals={2}
-              on:change={e => send('chorusAmount', nl(e.detail.value, 0.01, 4))} />
-            <Number label="Rate"
-              value={+ds($chorusRate, 0.01, 8, 0.5).toFixed(2)}
-              min={0.01} max={8} step={0.01} decimals={2} unit=" Hz"
-              on:change={e => send('chorusRate', ns(e.detail.value, 0.01, 8, 0.5))} />
-          </div>
-
-          <div class="group-label">Input Filter</div>
-          <div class="num-row">
-            <Number label="Lo Cut"
-              value={Math.round($loCutEnabled)}
-              min={0} max={1} step={1} decimals={0}
-              on:change={e => send('loCutEnabled', e.detail.value)} />
-            <Number label="Lo Freq"
-              value={+ds($loCutFreq, 50, 18000, 0.3).toFixed(0)}
-              min={50} max={18000} step={10} decimals={0} unit=" Hz"
-              on:change={e => send('loCutFreq', ns(e.detail.value, 50, 18000, 0.3))} />
-            <Number label="Hi Cut"
-              value={Math.round($hiCutEnabled)}
-              min={0} max={1} step={1} decimals={0}
-              on:change={e => send('hiCutEnabled', e.detail.value)} />
-            <Number label="Hi Freq"
-              value={+ds($hiCutFreq, 50, 18000, 0.3).toFixed(0)}
-              min={50} max={18000} step={10} decimals={0} unit=" Hz"
-              on:change={e => send('hiCutFreq', ns(e.detail.value, 50, 18000, 0.3))} />
           </div>
         </div>
 
