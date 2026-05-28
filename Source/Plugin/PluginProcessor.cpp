@@ -111,7 +111,7 @@ void AudioPluginAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     lastSustainOutput = false;
 
     // Reset FDN dirty-flag cache — sentinel -1 forces all params to be pushed on the first block
-    lastDiffusion = lastSize = lastDamping = lastFeedback = lastCrossoverFreq
+    lastDiffusion = lastSize = lastDamping = lastCrossoverFreq
         = lastReverbMode = lastHighFilterType = lastScale
         = lastFlatEnabled = lastCutEnabled = lastDensity = -1.0f;
 
@@ -157,6 +157,11 @@ void AudioPluginAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     // FDN input gain smoother: 100 ms ramp so frozen↔unfrozen transitions are click-free
     smoothFdnInputGain.reset(sampleRate, 0.10);
     smoothFdnInputGain.setCurrentAndTargetValue(1.0f);
+
+    // Feedback smoother: 50 ms ramp for click-free sustain engage/release.
+    // Overrides the 10 ms default set by initSmooth above.
+    smoothFeedback.reset(sampleRate, 0.05);
+    smoothFeedback.setCurrentAndTargetValue(pFeedback->load());
 }
 
 void AudioPluginAudioProcessor::releaseResources() {
@@ -273,10 +278,9 @@ void AudioPluginAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // Sustain also overrides feedback to 1.0 so normalDecayGain = g×1.0 ≈ 0.998.
     // Without this, normalDecayGain = g×feedback (e.g. 0.998×0.75 = 0.748) and the
     // tail decays in ~0.4 s regardless of the 60 s decay target.
-    {
-        const float targetFb = sustainActive ? 1.0f : pFeedback->load();
-        if (targetFb != lastFeedback) { fdnReverb.setFeedback(targetFb); lastFeedback = targetFb; }
-    }
+    // smoothFeedback ramps over 50 ms so engage/release does not produce a gain click.
+    smoothFeedback.setTargetValue(sustainActive ? 1.0f : pFeedback->load());
+    fdnReverb.setFeedback(smoothFeedback.skip(numSamples));
     if (auto v = pCrossoverFreq->load();  v != lastCrossoverFreq)  { fdnReverb.setCrossoverFreq(v);                lastCrossoverFreq = v; }
     if (auto v = pReverbMode->load();     v != lastReverbMode)     { fdnReverb.setReverbMode(static_cast<int>(v)); lastReverbMode = v; }
     if (auto v = pHighFilterType->load(); v != lastHighFilterType) { fdnReverb.setHighFilterType(v > 0.5f);        lastHighFilterType = v; }

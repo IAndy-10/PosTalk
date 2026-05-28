@@ -143,7 +143,6 @@ private:
     float lastDiffusion      = -1.0f;
     float lastSize           = -1.0f;
     float lastDamping        = -1.0f;
-    float lastFeedback       = -1.0f;
     float lastCrossoverFreq  = -1.0f;
     float lastReverbMode     = -1.0f;
     float lastHighFilterType = -1.0f;

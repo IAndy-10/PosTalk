@@ -54,7 +54,6 @@
 
     function sendGates(on: boolean) {
         send('sustainEnabled', on ? 1 : 0);
-        send('freeze',         on ? 1 : 0);
     }
 
     // ── Gesture classifiers ───────────────────────────────────────

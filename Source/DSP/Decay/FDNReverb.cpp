@@ -81,6 +81,7 @@ void FDNReverb::setCrossoverFreq(float hz) {
 }
 
 void FDNReverb::setFeedback(float fb) {
+    if (fb == feedback) return;
     feedback = fb;
     updateDecayGains();
 }
