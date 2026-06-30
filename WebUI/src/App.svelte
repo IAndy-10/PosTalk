@@ -69,6 +69,11 @@
         setTimeout(() => send('cutNow', 0), 100);
     }
 
+    // Reset pitch shifter to 440 Hz (unity — no pitch change)
+    function handlePitchReset() {
+        send('pitchFrequency', 0.04);
+    }
+
     // normalized ↔ display helpers
     const dl = (n: number, mn: number, mx: number) => mn + (mx - mn) * n;
     const ds = (n: number, mn: number, mx: number, sk: number) =>
@@ -284,6 +289,9 @@
           </div>
 
           <div class="group-label">Pitch Shifter</div>
+          <div class="perf-row">
+            <button class="cut-btn" on:click={handlePitchReset}>440</button>
+          </div>
           <div class="knob-row">
             <Knob label="Frequency" size="lg"
               value={$pitchFrequency}
