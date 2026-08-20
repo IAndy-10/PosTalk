@@ -1,0 +1,46 @@
+name: Build Release Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          brew install cmake node
+
+      - name: Build plugin (Release)
+        run: |
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(sysctl -n hw.ncpu)
+
+      - name: Collect binaries
+        run: |
+          mkdir -p release-artifacts/VST3 release-artifacts/AU
+          cp -r build/PosTalk_artefacts/Release/Standalone/PosTalk.app release-artifacts/
+          cp -r ~/Library/Audio/Plug-Ins/VST3/PosTalk.vst3 release-artifacts/VST3/
+          cp -r ~/Library/Audio/Plug-Ins/Components/PosTalk.component release-artifacts/AU/
+
+      - name: Create release archive
+        run: |
+          cd release-artifacts
+          zip -r ../PosTalk-${{ github.ref_name }}-macOS.zip .
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: PosTalk-${{ github.ref_name }}-macOS.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
