@@ -41,6 +41,9 @@ jobs:
           security list-keychain -d user -s "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
+      - name: List signing identities
+        run: security find-identity -v -p codesigning
+
       - name: Sign binaries
         env:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
