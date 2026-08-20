@@ -24,6 +24,41 @@ Built with **C++17 / JUCE 8** for DSP and **Svelte / TypeScript** for the embedd
 
 ---
 
+## Getting Started
+
+### First Use (DAW)
+
+1. Load **PosTalk** as an insert on any audio or instrument track.
+2. Play audio through it — the reverb is active immediately with default settings.
+3. Open the plugin window. The embedded UI loads automatically; no browser or server needed.
+
+### Enabling Gesture Control
+
+1. Click the **Camera** button in the top row of the UI.
+2. macOS will prompt for **camera permission** — click Allow. (This happens only once per app.)
+3. Once the camera feed is visible, the gesture engine activates automatically.
+4. Switch **Gesture Mode** to `Classic` or `Y-Track` depending on the mapping you want.
+
+### Gestures at a glance
+
+| What you do | What happens |
+|-------------|--------------|
+| Both hands, all fingers pointing **up** | Pitch Shifter frequency rises continuously |
+| Both hands, all fingers pointing **down** | Pitch Shifter frequency falls continuously |
+| One hand, index **up**, other fingers curled | Sustain **ON** (reverb tail held indefinitely) |
+| One hand, index **down**, other fingers curled | Sustain **OFF** (normal decay resumes) |
+
+Sustain is **latching** — losing sight of your hand does not release it. You must show the index-down gesture explicitly.
+
+### Recommended starting point
+
+- **Dry/Wet**: 40–60% for mix use, 100% for send/return
+- **Decay (RT60)**: 1.5–3 s for most material
+- **Diffusion**: 0.6–0.8 for smooth, dense tails
+- **Stereo Width**: 60–90° for wide stereo imaging
+
+---
+
 ## Features
 
 - **8-line Feedback Delay Network** reverb with Hadamard feedback matrix and prime-spaced delay lines
