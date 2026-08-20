@@ -254,7 +254,7 @@ C++ → JS updates are pushed via `WebBrowserComponent::evaluateJavascript()` on
 
 ```bash
 # Build UI and plugin
-cmake --build build --target AudioPlugin02_All
+cmake --build build --target PosTalk_All
 ```
 
 The Svelte bundle is compiled, embedded into the binary via `juce_add_binary_data`, and included in the final `.vst3` / `.component` bundle — no external files needed at runtime.

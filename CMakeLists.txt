@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(AudioPlugin02 VERSION 0.3.0)
+project(PosTalk VERSION 0.3.0)
 
 # ============================================================
 # C++ Standard
@@ -28,12 +28,12 @@ FetchContent_MakeAvailable(JUCE)
 # Plugin Definition
 # ============================================================
 
-juce_add_plugin(AudioPlugin02
+juce_add_plugin(PosTalk
     COMPANY_NAME "YourCompany"
     PLUGIN_MANUFACTURER_CODE Ycmp
     PLUGIN_CODE Ap02
     FORMATS Standalone VST3 AU
-    PRODUCT_NAME "plugin-camera-v1"
+    PRODUCT_NAME "PosTalk"
     PLIST_TO_MERGE "<plist><dict><key>NSCameraUsageDescription</key><string>This plugin displays the camera feed for visual feedback.</string></dict></plist>"
 
     IS_SYNTH FALSE
@@ -53,13 +53,13 @@ juce_add_plugin(AudioPlugin02
     AU_MAIN_TYPE kAudioUnitType_Effect
 )
 
-juce_generate_juce_header(AudioPlugin02)
+juce_generate_juce_header(PosTalk)
 
 # ============================================================
 # Source Files
 # ============================================================
 
-target_sources(AudioPlugin02 PRIVATE
+target_sources(PosTalk PRIVATE
     # Plugin core
     Source/Plugin/PluginEditor.cpp
     Source/Plugin/PluginEditor.h
@@ -127,7 +127,7 @@ if(APPLE)
         PROPERTIES COMPILE_FLAGS "-x objective-c++")
 endif()
 
-target_include_directories(AudioPlugin02 PRIVATE
+target_include_directories(PosTalk PRIVATE
     Source/Plugin
     Source/DSP
     Source/Parameters
@@ -155,18 +155,18 @@ add_custom_target(BuildSvelteUI ALL
 # Embed Web Resources Into Binary
 # ============================================================
 
-juce_add_binary_data(AudioPlugin02_Resources
+juce_add_binary_data(PosTalk_Resources
     SOURCES
         WebUI/dist/index.html
 )
 
-add_dependencies(AudioPlugin02_Resources BuildSvelteUI)
+add_dependencies(PosTalk_Resources BuildSvelteUI)
 
 # ============================================================
 # Compile Definitions & Linking
 # ============================================================
 
-target_compile_definitions(AudioPlugin02 PUBLIC
+target_compile_definitions(PosTalk PUBLIC
     JUCE_WEB_BROWSER=1
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
@@ -175,20 +175,20 @@ target_compile_definitions(AudioPlugin02 PUBLIC
 )
 
 if(APPLE)
-    target_compile_options(AudioPlugin02 PRIVATE
+    target_compile_options(PosTalk PRIVATE
         -Wno-deprecated-declarations
     )
 endif()
 
 if(APPLE)
-    target_link_libraries(AudioPlugin02 PRIVATE
+    target_link_libraries(PosTalk PRIVATE
         "-framework AVFoundation"
         "-framework WebKit"
     )
 endif()
 
-target_link_libraries(AudioPlugin02 PRIVATE
-    AudioPlugin02_Resources
+target_link_libraries(PosTalk PRIVATE
+    PosTalk_Resources
     juce::juce_audio_utils
     juce::juce_audio_processors
     juce::juce_gui_basics
@@ -213,5 +213,5 @@ macro(copy_resources_to_target target_name)
     endif()
 endmacro()
 
-copy_resources_to_target(AudioPlugin02)
-copy_resources_to_target(AudioPlugin02_Standalone)
+copy_resources_to_target(PosTalk)
+copy_resources_to_target(PosTalk_Standalone)
