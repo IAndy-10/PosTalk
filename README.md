@@ -4,6 +4,24 @@ A stereo algorithmic reverb plugin with real-time hand gesture control. Gesture 
 
 Built with **C++17 / JUCE 8** for DSP and **Svelte / TypeScript** for the embedded UI.
 
+## Download
+
+**Latest Release:** [PosTalk v0.3.0](https://github.com/IAndy-10/PosTalk/releases/latest)
+
+### Quick Install (macOS)
+
+1. **Download** the `.zip` from [Releases](https://github.com/IAndy-10/PosTalk/releases)
+2. **Unzip** and copy the plugins:
+   - `PosTalk.vst3` → `~/Library/Audio/Plug-Ins/VST3/`
+   - `PosTalk.component` → `~/Library/Audio/Plug-Ins/Components/`
+   - `PosTalk.app` → `/Applications/` (optional, for standalone)
+3. **Rescan** plugins in your DAW (restart DAW if needed)
+
+### Supported Formats
+- **VST3** (macOS 11+)
+- **AU** (macOS 10.13+)
+- **Standalone** (macOS 11+)
+
 ---
 
 ## Features
