@@ -49,13 +49,13 @@ jobs:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           codesign --deep --force --options runtime \
-            --sign "Developer ID Application: Italo Rojas Diaz ($TEAM_ID)" \
+            --sign "Developer ID Application: ITALO ANDRES ROJAS DIAZ ($TEAM_ID)" \
             build/PosTalk_artefacts/Release/Standalone/PosTalk.app
           codesign --deep --force --options runtime \
-            --sign "Developer ID Application: Italo Rojas Diaz ($TEAM_ID)" \
+            --sign "Developer ID Application: ITALO ANDRES ROJAS DIAZ ($TEAM_ID)" \
             ~/Library/Audio/Plug-Ins/VST3/PosTalk.vst3
           codesign --deep --force --options runtime \
-            --sign "Developer ID Application: Italo Rojas Diaz ($TEAM_ID)" \
+            --sign "Developer ID Application: ITALO ANDRES ROJAS DIAZ ($TEAM_ID)" \
             ~/Library/Audio/Plug-Ins/Components/PosTalk.component
 
       - name: Collect binaries
