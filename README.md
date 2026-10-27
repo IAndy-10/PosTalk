@@ -1,5 +1,7 @@
 # PosTalk
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus) ![JUCE 8](https://img.shields.io/badge/JUCE-8.0.4-8DC63F) ![Formats](https://img.shields.io/badge/formats-VST3%20%7C%20AU%20%7C%20Standalone-555) ![Platform](https://img.shields.io/badge/platform-macOS-lightgrey?logo=apple)
+
 A stereo algorithmic reverb plugin with real-time hand gesture control. Gesture tracking via webcam and MediaPipe drives DAW parameters live — no MIDI controllers required.
 
 Built with **C++17 / JUCE 8** for DSP and **Svelte / TypeScript** for the embedded UI.
@@ -336,3 +338,11 @@ npm run build  # Production bundle
 - Presets (7 factory presets) — complete
 - Neumorphic UI — complete
 - Y-Track macro gesture mode — in progress (parameters wired, gesture mapping in development)
+
+---
+
+## License
+
+PosTalk's source code is released under the [MIT License](LICENSE).
+
+It is built on [JUCE](https://juce.com), which is licensed separately (AGPLv3 or the JUCE license). Plugin binaries built from this code are also subject to JUCE's licensing terms.
